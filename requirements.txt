@@ -1,0 +1,9 @@
+fpdf
+openai
+pandas
+pydantic
+python-dotenv
+streamlit
+Unidecode
+xlsxwriter
+httpx
