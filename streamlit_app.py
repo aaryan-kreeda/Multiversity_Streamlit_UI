@@ -73,8 +73,7 @@ async def call_script_single(payload: Dict) -> Dict:
 # =====================================================
 def display_toc_hierarchical(toc_data: Dict):
     """
-    Display TOC in hierarchical format: Maintopic → Subtopic → Subnode
-    with proper difficulty levels shown (backward compatible)
+    Display TOC in hierarchical table format: Maintopic → Subtopic → Subnode
     """
     maintopics = toc_data.get("maintopics_with_subtopics", [])
     
@@ -84,59 +83,77 @@ def display_toc_hierarchical(toc_data: Dict):
     
     st.markdown("### 📋 Table of Contents")
     
+    # Build table data
+    rows = []
+    
     for maintopic_entry in maintopics:
         maintopic = maintopic_entry.get("maintopic", {})
         subtopics = maintopic_entry.get("subtopics", [])
         
         maintopic_num = maintopic.get("maintopic_number", "")
         maintopic_title = maintopic.get("title", "Untitled")
-        maintopic_duration = maintopic.get("duration", "")
+        maintopic_duration = maintopic.get("duration", "N/A")
         maintopic_difficulty = maintopic.get("difficulty_level", "")
         maintopic_desc = maintopic.get("description", "")
         
-        # Build expander title with optional fields
-        expander_title = f"**{maintopic_num}. {maintopic_title}**"
-        if maintopic_duration:
-            expander_title += f" | ⏱️ {maintopic_duration}"
-        if maintopic_difficulty:
-            expander_title += f" | 🎯 {maintopic_difficulty}"
+        # Add maintopic row
+        rows.append({
+            "Level": "📚 Maintopic",
+            "Number": f"**{maintopic_num}**",
+            "Title": f"**{maintopic_title}**",
+            "Description": maintopic_desc[:80] + "..." if len(maintopic_desc) > 80 else maintopic_desc,
+            "Duration": maintopic_duration,
+            "Difficulty": maintopic_difficulty or "-"
+        })
         
-        # Display Maintopic as expandable section
-        with st.expander(expander_title, expanded=True):
-            # Maintopic description
-            if maintopic_desc:
-                st.markdown(f"*{maintopic_desc}*")
-                st.markdown("---")
+        # Add subtopic rows
+        for subtopic in subtopics:
+            subtopic_num = subtopic.get("subtopic_number", "")
+            subtopic_title = subtopic.get("title", "Untitled")
+            subtopic_desc = subtopic.get("description", "")
+            subtopic_duration = subtopic.get("duration_minutes", 0)
+            subnodes = subtopic.get("subnodes", [])
             
-            # Display subtopics
-            if subtopics:
-                for subtopic in subtopics:
-                    subtopic_num = subtopic.get("subtopic_number", "")
-                    subtopic_title = subtopic.get("title", "Untitled")
-                    subtopic_desc = subtopic.get("description", "")
-                    subtopic_duration = subtopic.get("duration_minutes", 0)
-                    subnodes = subtopic.get("subnodes", [])
-                    
-                    # Subtopic header with indentation
-                    if subtopic_duration:
-                        st.markdown(f"**{maintopic_num}.{subtopic_num} {subtopic_title}** ({subtopic_duration} min)")
-                    else:
-                        st.markdown(f"**{maintopic_num}.{subtopic_num} {subtopic_title}**")
-                    
-                    # Subtopic description
-                    if subtopic_desc:
-                        st.caption(subtopic_desc)
-                    
-                    # Display subnodes as bullet list
-                    if subnodes:
-                        for subnode in subnodes:
-                            st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;• {subnode}")
-                    
-                    st.markdown("")  # Add spacing between subtopics
-            else:
-                st.info("No subtopics available for this maintopic")
+            rows.append({
+                "Level": "  📖 Subtopic",
+                "Number": f"{maintopic_num}.{subtopic_num}",
+                "Title": subtopic_title,
+                "Description": subtopic_desc[:80] + "..." if len(subtopic_desc) > 80 else subtopic_desc,
+                "Duration": f"{subtopic_duration} min" if subtopic_duration else "-",
+                "Difficulty": "-"
+            })
+            
+            # Add subnode rows
+            for subnode in subnodes:
+                rows.append({
+                    "Level": "    • Subnode",
+                    "Number": "",
+                    "Title": subnode,
+                    "Description": "",
+                    "Duration": "",
+                    "Difficulty": ""
+                })
     
-    # Show summary stats (with safe calculations)
+    # Create DataFrame
+    df = pd.DataFrame(rows)
+    
+    # Display as table
+    st.dataframe(
+        df,
+        use_container_width=True,
+        height=600,
+        column_config={
+            "Level": st.column_config.TextColumn("Level", width="small"),
+            "Number": st.column_config.TextColumn("No.", width="small"),
+            "Title": st.column_config.TextColumn("Title", width="large"),
+            "Description": st.column_config.TextColumn("Description", width="large"),
+            "Duration": st.column_config.TextColumn("Duration", width="small"),
+            "Difficulty": st.column_config.TextColumn("Difficulty", width="small"),
+        },
+        hide_index=True,
+    )
+    
+    # Show summary stats
     st.markdown("---")
     st.markdown("### 📊 Course Summary")
     
@@ -150,7 +167,7 @@ def display_toc_hierarchical(toc_data: Dict):
         for sub in m.get("subtopics", [])
     )
     
-    # Calculate total duration (handle missing duration_minutes)
+    # Calculate total duration
     total_minutes = 0
     for m in maintopics:
         for sub in m.get("subtopics", []):
