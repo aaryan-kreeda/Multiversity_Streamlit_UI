@@ -23,8 +23,8 @@ SCRIPT_SERVICE_URL = "http://13.202.97.102:3001"
 TOC_CREATE_ENDPOINT = f"{TOC_SERVICE_URL}/create-course"
 TOC_CREATE_SYNC_ENDPOINT = f"{TOC_SERVICE_URL}/create-course-sync"
 TOC_UPDATE_ENDPOINT = f"{TOC_SERVICE_URL}/update-toc"
-SCRIPT_BATCH_ENDPOINT = f"{SCRIPT_SERVICE_URL}/generate-scripts-batch"
-SCRIPT_SINGLE_ENDPOINT = f"{SCRIPT_SERVICE_URL}/generate-script"
+SCRIPT_BATCH_ENDPOINT = f"{SCRIPT_SERVICE_URL}/generate-scripts-batch-streamlit"
+SCRIPT_SINGLE_ENDPOINT = f"{SCRIPT_SERVICE_URL}/generate-script-streamlit"
 
 # =====================================================
 # PAGE CONFIGURATION
