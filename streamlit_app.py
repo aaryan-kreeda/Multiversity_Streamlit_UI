@@ -71,16 +71,18 @@ async def call_script_single(payload: Dict) -> Dict:
 # =====================================================
 # DISPLAY HELPERS
 # =====================================================
-def toc_to_dataframe(toc_data: Dict) -> pd.DataFrame:
+def display_toc_hierarchical(toc_data: Dict):
     """
-    Convert nested TOC structure to a flattened pandas DataFrame
+    Display TOC in hierarchical format: Maintopic → Subtopic → Subnode
+    with proper difficulty levels shown
     """
     maintopics = toc_data.get("maintopics_with_subtopics", [])
     
     if not maintopics:
-        return pd.DataFrame()
+        st.warning("No TOC data available")
+        return
     
-    rows = []
+    st.markdown("### 📋 Table of Contents")
     
     for maintopic_entry in maintopics:
         maintopic = maintopic_entry.get("maintopic", {})
@@ -92,100 +94,67 @@ def toc_to_dataframe(toc_data: Dict) -> pd.DataFrame:
         maintopic_difficulty = maintopic.get("difficulty_level", "")
         maintopic_desc = maintopic.get("description", "")
         
-        # Add maintopic row
-        rows.append({
-            "Level": "Maintopic",
-            "Number": str(maintopic_num),
-            "Title": maintopic_title,
-            "Description": maintopic_desc or "-",
-            "Duration": maintopic_duration,
-            "Difficulty": maintopic_difficulty or "-",
-            "Subnodes": ""
-        })
-        
-        # Add subtopic rows
-        for subtopic in subtopics:
-            subtopic_num = subtopic.get("subtopic_number", "")
-            subtopic_title = subtopic.get("title", "Untitled")
-            subtopic_desc = subtopic.get("description", "")
-            subtopic_duration = subtopic.get("duration_minutes", 0)
-            subnodes = subtopic.get("subnodes", [])
+        # Display Maintopic as expandable section
+        with st.expander(
+            f"**{maintopic_num}. {maintopic_title}** | ⏱️ {maintopic_duration} | 🎯 {maintopic_difficulty}",
+            expanded=True
+        ):
+            # Maintopic description
+            st.markdown(f"*{maintopic_desc}*")
+            st.markdown("---")
             
-            # Format subnodes as bullet list
-            subnodes_str = "\n".join([f"• {node}" for node in subnodes]) if subnodes else ""
-            
-            rows.append({
-                "Level": "Subtopic",
-                "Number": f"{maintopic_num}.{subtopic_num}",
-                "Title": subtopic_title,
-                "Description": subtopic_desc or "-",
-                "Duration": f"{subtopic_duration} min",
-                "Difficulty": "",
-                "Subnodes": subnodes_str
-            })
-    
-    df = pd.DataFrame(rows)
-    return df
-
-def display_toc_table(toc_data: Dict):
-    """Display TOC as an interactive table"""
-    df = toc_to_dataframe(toc_data)
-    
-    if df.empty:
-        st.warning("No TOC data available")
-        return
-    
-    st.markdown("### 📋 Table of Contents")
-    
-    # Display dataframe with custom styling
-    st.dataframe(
-        df,
-        use_container_width=True,
-        height=600,
-        column_config={
-            "Level": st.column_config.TextColumn(
-                "Level",
-                width="small",
-            ),
-            "Number": st.column_config.TextColumn(
-                "No.",
-                width="small",
-            ),
-            "Title": st.column_config.TextColumn(
-                "Title",
-                width="large",
-            ),
-            "Description": st.column_config.TextColumn(
-                "Description",
-                width="large",
-            ),
-            "Duration": st.column_config.TextColumn(
-                "Duration",
-                width="small",
-            ),
-            "Difficulty": st.column_config.TextColumn(
-                "Difficulty",
-                width="small",
-            ),
-            "Subnodes": st.column_config.TextColumn(
-                "Subnodes",
-                width="medium",
-            ),
-        },
-        hide_index=True,
-    )
+            # Display subtopics
+            for subtopic in subtopics:
+                subtopic_num = subtopic.get("subtopic_number", "")
+                subtopic_title = subtopic.get("title", "Untitled")
+                subtopic_desc = subtopic.get("description", "")
+                subtopic_duration = subtopic.get("duration_minutes", 0)
+                subnodes = subtopic.get("subnodes", [])
+                
+                # Subtopic header with indentation
+                st.markdown(f"**{maintopic_num}.{subtopic_num} {subtopic_title}** ({subtopic_duration} min)")
+                
+                # Subtopic description
+                if subtopic_desc:
+                    st.caption(subtopic_desc)
+                
+                # Display subnodes as bullet list
+                if subnodes:
+                    for subnode in subnodes:
+                        st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;• {subnode}")
+                
+                st.markdown("")  # Add spacing between subtopics
     
     # Show summary stats
-    maintopic_count = len(df[df["Level"] == "Maintopic"])
-    subtopic_count = len(df[df["Level"] == "Subtopic"])
+    st.markdown("---")
+    st.markdown("### 📊 Course Summary")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
+    
+    maintopic_count = len(maintopics)
+    subtopic_count = sum(len(m.get("subtopics", [])) for m in maintopics)
+    subnode_count = sum(
+        len(sub.get("subnodes", []))
+        for m in maintopics
+        for sub in m.get("subtopics", [])
+    )
+    
+    # Calculate total duration
+    total_minutes = sum(
+        sub.get("duration_minutes", 0)
+        for m in maintopics
+        for sub in m.get("subtopics", [])
+    )
+    total_hours = total_minutes / 60
+    
     with col1:
-        st.metric("Total Maintopics", maintopic_count)
+        st.metric("Maintopics", maintopic_count)
     with col2:
-        st.metric("Total Subtopics", subtopic_count)
+        st.metric("Subtopics", subtopic_count)
     with col3:
-        st.metric("Total Items", len(df))
+        st.metric("Subnodes", subnode_count)
+    with col4:
+        st.metric("Total Duration", f"{total_hours:.1f}h")
 
 def extract_subtopics_from_toc(toc_data: Dict) -> List[Dict]:
     """
@@ -306,8 +275,8 @@ with tab1:
                         
                         st.markdown("---")
                         
-                        # Display TOC as table
-                        display_toc_table(data.get("toc", {}))
+                        # Display TOC as hierarchical view
+                        display_toc_hierarchical(data.get("toc", {}))
                         
                     else:
                         st.error(f"❌ Error: Status {result['status_code']}")
@@ -344,14 +313,14 @@ with tab1:
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")
     
-    # Display stored TOC response as table
+    # Display stored TOC response as hierarchical view
     if st.session_state.toc_response:
         st.markdown("---")
         st.subheader("Previously Generated TOC")
         
         toc_data = st.session_state.toc_response.get("toc", {})
         if toc_data.get("maintopics_with_subtopics"):
-            display_toc_table(toc_data)
+            display_toc_hierarchical(toc_data)
         
         with st.expander("View Full Response JSON", expanded=False):
             st.json(st.session_state.toc_response)
