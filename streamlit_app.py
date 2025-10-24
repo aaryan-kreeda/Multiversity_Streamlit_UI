@@ -74,7 +74,7 @@ async def call_script_single(payload: Dict) -> Dict:
 def display_toc_hierarchical(toc_data: Dict):
     """
     Display TOC in hierarchical format: Maintopic → Subtopic → Subnode
-    with proper difficulty levels shown
+    with proper difficulty levels shown (backward compatible)
     """
     maintopics = toc_data.get("maintopics_with_subtopics", [])
     
@@ -94,38 +94,49 @@ def display_toc_hierarchical(toc_data: Dict):
         maintopic_difficulty = maintopic.get("difficulty_level", "")
         maintopic_desc = maintopic.get("description", "")
         
+        # Build expander title with optional fields
+        expander_title = f"**{maintopic_num}. {maintopic_title}**"
+        if maintopic_duration:
+            expander_title += f" | ⏱️ {maintopic_duration}"
+        if maintopic_difficulty:
+            expander_title += f" | 🎯 {maintopic_difficulty}"
+        
         # Display Maintopic as expandable section
-        with st.expander(
-            f"**{maintopic_num}. {maintopic_title}** | ⏱️ {maintopic_duration} | 🎯 {maintopic_difficulty}",
-            expanded=True
-        ):
+        with st.expander(expander_title, expanded=True):
             # Maintopic description
-            st.markdown(f"*{maintopic_desc}*")
-            st.markdown("---")
+            if maintopic_desc:
+                st.markdown(f"*{maintopic_desc}*")
+                st.markdown("---")
             
             # Display subtopics
-            for subtopic in subtopics:
-                subtopic_num = subtopic.get("subtopic_number", "")
-                subtopic_title = subtopic.get("title", "Untitled")
-                subtopic_desc = subtopic.get("description", "")
-                subtopic_duration = subtopic.get("duration_minutes", 0)
-                subnodes = subtopic.get("subnodes", [])
-                
-                # Subtopic header with indentation
-                st.markdown(f"**{maintopic_num}.{subtopic_num} {subtopic_title}** ({subtopic_duration} min)")
-                
-                # Subtopic description
-                if subtopic_desc:
-                    st.caption(subtopic_desc)
-                
-                # Display subnodes as bullet list
-                if subnodes:
-                    for subnode in subnodes:
-                        st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;• {subnode}")
-                
-                st.markdown("")  # Add spacing between subtopics
+            if subtopics:
+                for subtopic in subtopics:
+                    subtopic_num = subtopic.get("subtopic_number", "")
+                    subtopic_title = subtopic.get("title", "Untitled")
+                    subtopic_desc = subtopic.get("description", "")
+                    subtopic_duration = subtopic.get("duration_minutes", 0)
+                    subnodes = subtopic.get("subnodes", [])
+                    
+                    # Subtopic header with indentation
+                    if subtopic_duration:
+                        st.markdown(f"**{maintopic_num}.{subtopic_num} {subtopic_title}** ({subtopic_duration} min)")
+                    else:
+                        st.markdown(f"**{maintopic_num}.{subtopic_num} {subtopic_title}**")
+                    
+                    # Subtopic description
+                    if subtopic_desc:
+                        st.caption(subtopic_desc)
+                    
+                    # Display subnodes as bullet list
+                    if subnodes:
+                        for subnode in subnodes:
+                            st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;• {subnode}")
+                    
+                    st.markdown("")  # Add spacing between subtopics
+            else:
+                st.info("No subtopics available for this maintopic")
     
-    # Show summary stats
+    # Show summary stats (with safe calculations)
     st.markdown("---")
     st.markdown("### 📊 Course Summary")
     
@@ -139,13 +150,15 @@ def display_toc_hierarchical(toc_data: Dict):
         for sub in m.get("subtopics", [])
     )
     
-    # Calculate total duration
-    total_minutes = sum(
-        sub.get("duration_minutes", 0)
-        for m in maintopics
-        for sub in m.get("subtopics", [])
-    )
-    total_hours = total_minutes / 60
+    # Calculate total duration (handle missing duration_minutes)
+    total_minutes = 0
+    for m in maintopics:
+        for sub in m.get("subtopics", []):
+            duration = sub.get("duration_minutes", 0)
+            if isinstance(duration, (int, float)):
+                total_minutes += duration
+    
+    total_hours = total_minutes / 60 if total_minutes > 0 else 0
     
     with col1:
         st.metric("Maintopics", maintopic_count)
@@ -154,7 +167,10 @@ def display_toc_hierarchical(toc_data: Dict):
     with col3:
         st.metric("Subnodes", subnode_count)
     with col4:
-        st.metric("Total Duration", f"{total_hours:.1f}h")
+        if total_hours > 0:
+            st.metric("Total Duration", f"{total_hours:.1f}h")
+        else:
+            st.metric("Total Duration", "N/A")
 
 def extract_subtopics_from_toc(toc_data: Dict) -> List[Dict]:
     """
@@ -261,7 +277,7 @@ with tab1:
                         data = result["data"]
                         st.success(f"✅ TOC generated successfully in {elapsed:.2f}s!")
                         
-                        # Display metrics
+                        # Display metrics (with safe access)
                         col_m1, col_m2, col_m3 = st.columns(3)
                         with col_m1:
                             maintopics_count = len(data.get("toc", {}).get("maintopics_with_subtopics", []))
@@ -276,13 +292,24 @@ with tab1:
                         st.markdown("---")
                         
                         # Display TOC as hierarchical view
-                        display_toc_hierarchical(data.get("toc", {}))
+                        try:
+                            display_toc_hierarchical(data.get("toc", {}))
+                        except Exception as display_error:
+                            st.error(f"Error displaying TOC: {str(display_error)}")
+                            st.json(data.get("toc", {}))
                         
                     else:
                         st.error(f"❌ Error: Status {result['status_code']}")
                         st.json(result["data"])
+                except httpx.HTTPStatusError as e:
+                    st.error(f"❌ HTTP Error: {e.response.status_code}")
+                    st.error(f"Response: {e.response.text}")
+                except httpx.RequestError as e:
+                    st.error(f"❌ Request Error: {str(e)}")
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
     
     with col_btn2:
         if st.button("⚡ Start Async Generation", key="btn_create_toc_async"):
@@ -320,7 +347,11 @@ with tab1:
         
         toc_data = st.session_state.toc_response.get("toc", {})
         if toc_data.get("maintopics_with_subtopics"):
-            display_toc_hierarchical(toc_data)
+            try:
+                display_toc_hierarchical(toc_data)
+            except Exception as display_error:
+                st.error(f"Error displaying TOC: {str(display_error)}")
+                st.json(toc_data)
         
         with st.expander("View Full Response JSON", expanded=False):
             st.json(st.session_state.toc_response)
