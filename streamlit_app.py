@@ -28,6 +28,30 @@ TOC_UPDATE_ENDPOINT = f"{TOC_SERVICE_URL}/update-toc"
 SCRIPT_BATCH_ENDPOINT = f"{SCRIPT_SERVICE_URL}/generate-scripts-batch-streamlit"
 SCRIPT_SINGLE_ENDPOINT = f"{SCRIPT_SERVICE_URL}/generate-script-streamlit"
 
+# ---------- Defensive helpers ----------
+def safe_list(value):
+    """Return a list if value is a list-like; otherwise return empty list."""
+    if isinstance(value, list):
+        return value
+    return []
+
+def safe_dict(value):
+    """Return a dict if value is a dict; otherwise return empty dict."""
+    if isinstance(value, dict):
+        return value
+    return {}
+
+def safe_str(value, max_len=None):
+    """Return a string safe for slicing/truncation."""
+    if value is None:
+        return ""
+    s = str(value)
+    if max_len and len(s) > max_len:
+        return s[:max_len] + "..."
+    return s
+# ----------------------------------------
+
+
 # PAGE CONFIGURATION
 
 st.set_page_config(
@@ -72,65 +96,132 @@ async def call_script_single(payload: Dict) -> Dict:
 def display_toc_hierarchical(toc_data: Dict):
     """
     Display TOC in hierarchical table format: Maintopic → Subtopic → Subnode
+    This version is defensive against None values and unexpected types.
     """
-    maintopics = toc_data.get("maintopics_with_subtopics", [])
-    
+    toc_data = safe_dict(toc_data)
+    maintopics = safe_list(toc_data.get("maintopics_with_subtopics"))
+
     if not maintopics:
-        st.warning("No TOC data available")
+        st.warning("No TOC data available (empty or malformed structure).")
+        # Show what we actually received for debugging
+        with st.expander("View raw TOC object (debug)"):
+            st.write(toc_data)
         return
-    
-    st.markdown("### 📋 Table of Contents")
-    
-    # Build table data
+
+    st.markdown("### 📋 Table of Contents (Safe View)")
+
     rows = []
-    
     for maintopic_entry in maintopics:
-        maintopic = maintopic_entry.get("maintopic", {})
-        subtopics = maintopic_entry.get("subtopics", [])
-        
+        if not isinstance(maintopic_entry, dict):
+            # Skip non-dict entries but log them
+            rows.append({
+                "Level": "⚠️ Unexpected maintopic entry",
+                "Number": "",
+                "Title": safe_str(maintopic_entry),
+                "Description": "",
+                "Duration": "",
+                "Difficulty": ""
+            })
+            continue
+
+        maintopic = safe_dict(maintopic_entry.get("maintopic"))
+        subtopics = safe_list(maintopic_entry.get("subtopics"))
+
         maintopic_num = maintopic.get("maintopic_number", "")
         maintopic_title = maintopic.get("title", "Untitled")
         maintopic_duration = maintopic.get("duration", "N/A")
         maintopic_difficulty = maintopic.get("difficulty_level", "")
-        maintopic_desc = maintopic.get("description", "")
-        
-        # Add maintopic row
+        maintopic_desc = safe_str(maintopic.get("description", ""), max_len=80)
+
         rows.append({
             "Level": "📚 Maintopic",
-            "Number": f"**{maintopic_num}**",
+            "Number": f"**{maintopic_num}**" if maintopic_num else "",
             "Title": f"**{maintopic_title}**",
-            "Description": maintopic_desc[:80] + "..." if len(maintopic_desc) > 80 else maintopic_desc,
+            "Description": maintopic_desc,
             "Duration": maintopic_duration,
             "Difficulty": maintopic_difficulty or "-"
         })
-        
-        # Add subtopic rows
+
         for subtopic in subtopics:
-            subtopic_num = subtopic.get("subtopic_number", "")
-            subtopic_title = subtopic.get("title", "Untitled")
-            subtopic_desc = subtopic.get("description", "")
-            subtopic_duration = subtopic.get("duration_minutes", 0)
-            subnodes = subtopic.get("subnodes", [])
-            
-            rows.append({
-                "Level": "  📖 Subtopic",
-                "Number": f"{maintopic_num}.{subtopic_num}",
-                "Title": subtopic_title,
-                "Description": subtopic_desc[:80] + "..." if len(subtopic_desc) > 80 else subtopic_desc,
-                "Duration": f"{subtopic_duration} min" if subtopic_duration else "-",
-                "Difficulty": "-"
-            })
-            
-            # Add subnode rows
-            for subnode in subnodes:
+            if not isinstance(subtopic, dict):
                 rows.append({
-                    "Level": "    • Subnode",
+                    "Level": "  ⚠️ Unexpected subtopic entry",
                     "Number": "",
-                    "Title": subnode,
+                    "Title": safe_str(subtopic),
                     "Description": "",
                     "Duration": "",
                     "Difficulty": ""
                 })
+                continue
+
+            subtopic_num = subtopic.get("subtopic_number", "")
+            subtopic_title = subtopic.get("title", "Untitled")
+            subtopic_desc = safe_str(subtopic.get("description", ""), max_len=80)
+            subtopic_duration = subtopic.get("duration_minutes", 0)
+
+            subnodes = safe_list(subtopic.get("subnodes"))
+            rows.append({
+                "Level": "  📖 Subtopic",
+                "Number": f"{maintopic_num}.{subtopic_num}" if maintopic_num or subtopic_num else "",
+                "Title": subtopic_title,
+                "Description": subtopic_desc,
+                "Duration": f"{subtopic_duration} min" if subtopic_duration else "-",
+                "Difficulty": "-"
+            })
+
+            for subnode in subnodes:
+                # subnode might be a dict or string. If dict, try to extract title.
+                title = ""
+                if isinstance(subnode, dict):
+                    title = subnode.get("title") or subnode.get("name") or str(subnode)
+                else:
+                    title = safe_str(subnode)
+                rows.append({
+                    "Level": "    • Subnode",
+                    "Number": "",
+                    "Title": title,
+                    "Description": "",
+                    "Duration": "",
+                    "Difficulty": ""
+                })
+
+    df = pd.DataFrame(rows)
+
+    # Display as table - use width=None (or an integer)
+    st.dataframe(
+        df,
+        width=None,
+        height=600,
+        hide_index=True
+    )
+
+    # Summary - use safe iteration (ignore non-dict entries)
+    sane_maintopics = [m for m in maintopics if isinstance(m, dict)]
+    maintopic_count = len(sane_maintopics)
+    subtopic_count = sum(len(safe_list(m.get("subtopics"))) for m in sane_maintopics)
+    subnode_count = sum(len(safe_list(sub.get("subnodes"))) for m in sane_maintopics for sub in safe_list(m.get("subtopics")))
+
+    # total duration
+    total_minutes = 0
+    for m in sane_maintopics:
+        for sub in safe_list(m.get("subtopics")):
+            duration = sub.get("duration_minutes", 0) if isinstance(sub, dict) else 0
+            if isinstance(duration, (int, float)):
+                total_minutes += duration
+    total_hours = total_minutes / 60 if total_minutes > 0 else 0
+
+    st.markdown("---")
+    st.markdown("### 📊 Course Summary")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Maintopics", maintopic_count)
+    with col2:
+        st.metric("Subtopics", subtopic_count)
+    with col3:
+        st.metric("Subnodes", subnode_count)
+    with col4:
+        st.metric("Total Duration", f"{total_hours:.1f}h" if total_hours else "N/A")
+
     
     # Create DataFrame
     df = pd.DataFrame(rows)
@@ -138,7 +229,7 @@ def display_toc_hierarchical(toc_data: Dict):
     # Display as table
     st.dataframe(
         df,
-        width=True,
+        width=None,
         height=600,
         column_config={
             "Level": st.column_config.TextColumn("Level", width="small"),
@@ -189,39 +280,57 @@ def display_toc_hierarchical(toc_data: Dict):
 
 def extract_subtopics_from_toc(toc_data: Dict) -> List[Dict]:
     """
-    Extract all subtopics from TOC for script generation dropdown
-    Returns list of dictionaries with subtopic details
+    Extract all subtopics from TOC for script generation dropdown (defensive).
     """
-    maintopics = toc_data.get("maintopics_with_subtopics", [])
+    toc_data = safe_dict(toc_data)
+    maintopics = safe_list(toc_data.get("maintopics_with_subtopics"))
     subtopics_list = []
-    
+
     for maintopic_entry in maintopics:
-        maintopic = maintopic_entry.get("maintopic", {})
-        subtopics = maintopic_entry.get("subtopics", [])
-        
+        if not isinstance(maintopic_entry, dict):
+            continue
+        maintopic = safe_dict(maintopic_entry.get("maintopic"))
+        subtopics = safe_list(maintopic_entry.get("subtopics"))
         maintopic_num = maintopic.get("maintopic_number", "")
         maintopic_title = maintopic.get("title", "")
-        
+
         for subtopic in subtopics:
+            if not isinstance(subtopic, dict):
+                # If it's a string, create a minimal entry
+                title = safe_str(subtopic)
+                subtopics_list.append({
+                    "maintopic_number": maintopic_num,
+                    "maintopic_title": maintopic_title,
+                    "subtopic_number": "",
+                    "subtopic_title": title,
+                    "full_number": f"{maintopic_num}.",
+                    "display_name": f"{maintopic_num}. - {title}",
+                    "description": "",
+                    "duration": 5,
+                    "subnodes": []
+                })
+                continue
+
             subtopic_num = subtopic.get("subtopic_number", "")
             subtopic_title = subtopic.get("title", "")
-            subtopic_desc = subtopic.get("description", "")
-            subtopic_duration = subtopic.get("duration_minutes", 5)
-            subnodes = subtopic.get("subnodes", [])
-            
+            subtopic_desc = subtopic.get("description", "") or ""
+            subtopic_duration = subtopic.get("duration_minutes", 5) or 5
+            subnodes = safe_list(subtopic.get("subnodes"))
+
             subtopics_list.append({
                 "maintopic_number": maintopic_num,
                 "maintopic_title": maintopic_title,
                 "subtopic_number": subtopic_num,
                 "subtopic_title": subtopic_title,
-                "full_number": f"{maintopic_num}.{subtopic_num}",
-                "display_name": f"{maintopic_num}.{subtopic_num} - {subtopic_title}",
+                "full_number": f"{maintopic_num}.{subtopic_num}" if (maintopic_num or subtopic_num) else "",
+                "display_name": f"{maintopic_num}.{subtopic_num} - {subtopic_title}" if subtopic_num else f"{maintopic_num}. - {subtopic_title}",
                 "description": subtopic_desc,
                 "duration": subtopic_duration,
                 "subnodes": subnodes
             })
-    
+
     return subtopics_list
+
 
 # MAIN UI
 st.title("📚 Course TOC & Script Generator")
@@ -478,7 +587,7 @@ with tab2:
                     })
                 
                 preview_df = pd.DataFrame(preview_data)
-                st.dataframe(preview_df, width=True, hide_index=True)
+                st.dataframe(preview_df, width=None, hide_index=True)
                 
                 st.info(f"💡 Total scripts to generate: {len(selected_subtopics)}")
                 
