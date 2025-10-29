@@ -18,8 +18,8 @@ import os
 # Load environment variables
 load_dotenv()
 
-TOC_SERVICE_URL = os.getenv("TOC_SERVICE_URL") 
-SCRIPT_SERVICE_URL = os.getenv("SCRIPT_SERVICE_URL")
+TOC_SERVICE_URL = st.secrets.get("TOC_SERVICE_URL") or os.getenv("TOC_SERVICE_URL")
+SCRIPT_SERVICE_URL = st.secrets.get("SCRIPT_SERVICE_URL") or os.getenv("SCRIPT_SERVICE_URL")
 
 
 TOC_CREATE_ENDPOINT = f"{TOC_SERVICE_URL}/create-course"
@@ -42,13 +42,22 @@ def safe_dict(value):
     return {}
 
 def safe_str(value, max_len=None):
-    """Return a string safe for slicing/truncation."""
+    """Return a safe string for display and slicing."""
     if value is None:
-        return ""
-    s = str(value)
-    if max_len and len(s) > max_len:
-        return s[:max_len] + "..."
+        s = ""
+    else:
+        s = str(value)
+    if max_len is not None and len(s) > max_len:
+        s = s[:max_len] + "..."
     return s
+def safe_len(obj):
+    """Return len(obj) if possible, else 0."""
+    try:
+        return len(obj)
+    except Exception:
+        return 0
+
+
 # ----------------------------------------
 
 
@@ -103,19 +112,17 @@ def display_toc_hierarchical(toc_data: Dict):
 
     if not maintopics:
         st.warning("No TOC data available (empty or malformed structure).")
-        # Show what we actually received for debugging
         with st.expander("View raw TOC object (debug)"):
             st.write(toc_data)
         return
 
-    st.markdown("### 📋 Table of Contents (Safe View)")
+    st.markdown("### 📋 Course Structure")
 
     rows = []
     for maintopic_entry in maintopics:
         if not isinstance(maintopic_entry, dict):
-            # Skip non-dict entries but log them
             rows.append({
-                "Level": "⚠️ Unexpected maintopic entry",
+                "Level": "⚠️ Error",
                 "Number": "",
                 "Title": safe_str(maintopic_entry),
                 "Description": "",
@@ -145,7 +152,7 @@ def display_toc_hierarchical(toc_data: Dict):
         for subtopic in subtopics:
             if not isinstance(subtopic, dict):
                 rows.append({
-                    "Level": "  ⚠️ Unexpected subtopic entry",
+                    "Level": "  ⚠️ Error",
                     "Number": "",
                     "Title": safe_str(subtopic),
                     "Description": "",
@@ -170,7 +177,6 @@ def display_toc_hierarchical(toc_data: Dict):
             })
 
             for subnode in subnodes:
-                # subnode might be a dict or string. If dict, try to extract title.
                 title = ""
                 if isinstance(subnode, dict):
                     title = subnode.get("title") or subnode.get("name") or str(subnode)
@@ -190,7 +196,7 @@ def display_toc_hierarchical(toc_data: Dict):
     # Display as table - use width=None (or an integer)
     st.dataframe(
         df,
-        width=None,
+        width='stretch',
         height=600,
         hide_index=True
     )
@@ -229,7 +235,7 @@ def display_toc_hierarchical(toc_data: Dict):
     # Display as table
     st.dataframe(
         df,
-        width=None,
+        width='stretch',
         height=600,
         column_config={
             "Level": st.column_config.TextColumn("Level", width="small"),
@@ -242,30 +248,41 @@ def display_toc_hierarchical(toc_data: Dict):
         hide_index=True,
     )
     
-    # Show summary stats
+    # Show summary stats (defensive calculations)
     st.markdown("---")
     st.markdown("### 📊 Course Summary")
-    
+
     col1, col2, col3, col4 = st.columns(4)
-    
-    maintopic_count = len(maintopics)
-    subtopic_count = sum(len(m.get("subtopics", [])) for m in maintopics)
-    subnode_count = sum(
-        len(sub.get("subnodes", []))
-        for m in maintopics
-        for sub in m.get("subtopics", [])
-    )
-    
-    # Calculate total duration
+
+    # Use previously sanitized maintopics list (sane_maintopics) where possible
+    maintopic_count = len(sane_maintopics)
+
+    # Count subtopics defensively
+    subtopic_count = 0
+    for m in sane_maintopics:
+        subtopic_count += safe_len(m.get("subtopics"))
+
+    # Count subnodes defensively
+    subnode_count = 0
+    for m in sane_maintopics:
+        for sub in safe_list(m.get("subtopics")):
+            if isinstance(sub, dict):
+                subnode_count += safe_len(sub.get("subnodes"))
+            else:
+                # if sub is a list-like, count its items; otherwise ignore
+                subnode_count += safe_len(sub) if isinstance(sub, (list, tuple)) else 0
+
+    # Calculate total duration defensively
     total_minutes = 0
-    for m in maintopics:
-        for sub in m.get("subtopics", []):
-            duration = sub.get("duration_minutes", 0)
-            if isinstance(duration, (int, float)):
-                total_minutes += duration
-    
+    for m in sane_maintopics:
+        for sub in safe_list(m.get("subtopics")):
+            if isinstance(sub, dict):
+                duration = sub.get("duration_minutes", 0) or 0
+                if isinstance(duration, (int, float)):
+                    total_minutes += duration
+
     total_hours = total_minutes / 60 if total_minutes > 0 else 0
-    
+
     with col1:
         st.metric("Maintopics", maintopic_count)
     with col2:
@@ -397,7 +414,7 @@ with tab1:
                         data = result["data"]
                         st.success(f"✅ TOC generated successfully in {elapsed:.2f}s!")
                         
-                        # Display metrics (with safe access)
+                        # Display generation metrics
                         col_m1, col_m2, col_m3 = st.columns(3)
                         with col_m1:
                             maintopics_count = len(data.get("toc", {}).get("maintopics_with_subtopics", []))
@@ -411,12 +428,8 @@ with tab1:
                         
                         st.markdown("---")
                         
-                        # Display TOC as hierarchical view
-                        try:
-                            display_toc_hierarchical(data.get("toc", {}))
-                        except Exception as display_error:
-                            st.error(f"Error displaying TOC: {str(display_error)}")
-                            st.json(data.get("toc", {}))
+                        # Store the TOC data in session state
+                        st.session_state.toc_response = result["data"]
                         
                     else:
                         st.error(f"❌ Error: Status {result['status_code']}")
@@ -465,27 +478,20 @@ with tab1:
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")
     
-    # Display stored TOC response as hierarchical view
+    # Only display TOC when first generated
     if st.session_state.toc_response:
         st.markdown("---")
-        st.subheader("Previously Generated TOC")
+        st.subheader("Generated Table of Contents")
         
-        # ✅ Safe TOC rendering block
+        # Display TOC as hierarchical view
         toc_data = st.session_state.toc_response.get("toc") or {}
-
-        if not toc_data:
-            st.warning("⚠️ No TOC data found in response.")
-            st.json(st.session_state.toc_response)
-        else:
+        if toc_data and toc_data.get("maintopics_with_subtopics"):
             try:
-                if toc_data.get("maintopics_with_subtopics"):
-                    display_toc_hierarchical(toc_data)
-                else:
-                    st.warning("⚠️ TOC exists but has no maintopics or subtopics.")
-                    st.json(toc_data)
+                display_toc_hierarchical(toc_data)
             except Exception as display_error:
                 st.error(f"Error displaying TOC: {str(display_error)}")
-                st.json(toc_data)
+                with st.expander("View raw TOC data"):
+                    st.json(toc_data)
 
         
         with st.expander("View Full Response JSON", expanded=False):
@@ -583,11 +589,12 @@ with tab2:
                         "Title": sub["subtopic_title"],
                         "Maintopic": sub["maintopic_title"],
                         "Duration": f"{sub['duration']} min",
-                        "Description": sub["description"][:50] + "..." if len(sub["description"]) > 50 else sub["description"]
+                        "Description": safe_str(sub.get("description"), max_len=50)
+
                     })
                 
                 preview_df = pd.DataFrame(preview_data)
-                st.dataframe(preview_df, width=None, hide_index=True)
+                st.dataframe(preview_df, width='stretch', hide_index=True)
                 
                 st.info(f"💡 Total scripts to generate: {len(selected_subtopics)}")
                 
