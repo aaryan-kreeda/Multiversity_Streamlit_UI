@@ -18,9 +18,8 @@ import os
 # Load environment variables
 load_dotenv()
 
-TOC_SERVICE_URL = st.secrets.get("TOC_SERVICE_URL") or os.getenv("TOC_SERVICE_URL")
-SCRIPT_SERVICE_URL = st.secrets.get("SCRIPT_SERVICE_URL") or os.getenv("SCRIPT_SERVICE_URL")
-
+TOC_SERVICE_URL = os.getenv("TOC_SERVICE_URL") or st.secrets.get("TOC_SERVICE_URL", None)
+SCRIPT_SERVICE_URL = os.getenv("SCRIPT_SERVICE_URL") or st.secrets.get("SCRIPT_SERVICE_URL", None)
 
 TOC_CREATE_ENDPOINT = f"{TOC_SERVICE_URL}/create-course"
 TOC_CREATE_SYNC_ENDPOINT = f"{TOC_SERVICE_URL}/create-course-sync"
