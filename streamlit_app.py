@@ -18,8 +18,8 @@ import os
 # Load environment variables
 load_dotenv()
 
-TOC_SERVICE_URL = os.getenv("TOC_SERVICE_URL")
-SCRIPT_SERVICE_URL= os.getenv("SCRIPT_SERVICE_URL")
+TOC_SERVICE_URL = os.getenv("TOC_SERVICE_URL") 
+SCRIPT_SERVICE_URL = os.getenv("SCRIPT_SERVICE_URL")
 
 
 TOC_CREATE_ENDPOINT = f"{TOC_SERVICE_URL}/create-course"
