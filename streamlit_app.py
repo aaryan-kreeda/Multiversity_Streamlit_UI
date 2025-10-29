@@ -1,6 +1,5 @@
 """
 Streamlit Frontend for TOC Generation and Script Generation Microservices
-=========================================================================
 This minimal UI calls two microservices:
 1. TOC Generation Service (async with callback OR synchronous)
 2. Script Generation Service (batch processing)
@@ -13,12 +12,15 @@ import pandas as pd
 import json
 import time
 from typing import Dict, List, Any
+from dotenv import load_dotenv
+import os
 
-# =====================================================
-# HARDCODED ENDPOINTS
-# =====================================================
-TOC_SERVICE_URL = "http://13.202.97.102:3000"
-SCRIPT_SERVICE_URL = "http://13.202.97.102:3001"
+# Load environment variables
+load_dotenv()
+
+TOC_SERVICE_URL = os.getenv("TOC_SERVICE_URL")
+SCRIPT_SERVICE_URL= os.getenv("SCRIPT_SERVICE_URL")
+
 
 TOC_CREATE_ENDPOINT = f"{TOC_SERVICE_URL}/create-course"
 TOC_CREATE_SYNC_ENDPOINT = f"{TOC_SERVICE_URL}/create-course-sync"
@@ -26,18 +28,16 @@ TOC_UPDATE_ENDPOINT = f"{TOC_SERVICE_URL}/update-toc"
 SCRIPT_BATCH_ENDPOINT = f"{SCRIPT_SERVICE_URL}/generate-scripts-batch-streamlit"
 SCRIPT_SINGLE_ENDPOINT = f"{SCRIPT_SERVICE_URL}/generate-script-streamlit"
 
-# =====================================================
 # PAGE CONFIGURATION
-# =====================================================
+
 st.set_page_config(
     page_title="Course & Script Generator",
     page_icon="📚",
     layout="wide"
 )
 
-# =====================================================
 # ASYNC HTTP HELPERS
-# =====================================================
+
 async def call_toc_create_sync(payload: Dict) -> Dict:
     """Call synchronous TOC creation endpoint (waits for full response)"""
     async with httpx.AsyncClient(timeout=300.0) as client:
@@ -68,9 +68,7 @@ async def call_script_single(payload: Dict) -> Dict:
         response = await client.post(SCRIPT_SINGLE_ENDPOINT, json=payload)
         return {"status_code": response.status_code, "data": response.json()}
 
-# =====================================================
 # DISPLAY HELPERS
-# =====================================================
 def display_toc_hierarchical(toc_data: Dict):
     """
     Display TOC in hierarchical table format: Maintopic → Subtopic → Subnode
@@ -140,7 +138,7 @@ def display_toc_hierarchical(toc_data: Dict):
     # Display as table
     st.dataframe(
         df,
-        use_container_width=True,
+        width=True,
         height=600,
         column_config={
             "Level": st.column_config.TextColumn("Level", width="small"),
@@ -225,9 +223,7 @@ def extract_subtopics_from_toc(toc_data: Dict) -> List[Dict]:
     
     return subtopics_list
 
-# =====================================================
 # MAIN UI
-# =====================================================
 st.title("📚 Course TOC & Script Generator")
 st.markdown("---")
 
@@ -239,9 +235,7 @@ if "script_response" not in st.session_state:
 if "selected_subtopics_for_scripts" not in st.session_state:
     st.session_state.selected_subtopics_for_scripts = []
 
-# =====================================================
 # TAB 1: TOC GENERATION
-# =====================================================
 tab1, tab2 = st.tabs(["🎯 Generate TOC", "📝 Generate Scripts"])
 
 with tab1:
@@ -323,6 +317,11 @@ with tab1:
                     st.error(f"Response: {e.response.text}")
                 except httpx.RequestError as e:
                     st.error(f"❌ Request Error: {str(e)}")
+                    if hasattr(e, 'request'):
+                        st.error(f"URL attempted: {e.request.url}")
+                    import traceback
+                    st.code(traceback.format_exc())
+
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")
                     import traceback
@@ -362,20 +361,28 @@ with tab1:
         st.markdown("---")
         st.subheader("Previously Generated TOC")
         
-        toc_data = st.session_state.toc_response.get("toc", {})
-        if toc_data.get("maintopics_with_subtopics"):
+        # ✅ Safe TOC rendering block
+        toc_data = st.session_state.toc_response.get("toc") or {}
+
+        if not toc_data:
+            st.warning("⚠️ No TOC data found in response.")
+            st.json(st.session_state.toc_response)
+        else:
             try:
-                display_toc_hierarchical(toc_data)
+                if toc_data.get("maintopics_with_subtopics"):
+                    display_toc_hierarchical(toc_data)
+                else:
+                    st.warning("⚠️ TOC exists but has no maintopics or subtopics.")
+                    st.json(toc_data)
             except Exception as display_error:
                 st.error(f"Error displaying TOC: {str(display_error)}")
                 st.json(toc_data)
+
         
         with st.expander("View Full Response JSON", expanded=False):
             st.json(st.session_state.toc_response)
 
-# =====================================================
 # TAB 2: SCRIPT GENERATION FROM TOC
-# =====================================================
 with tab2:
     st.header("Educational Script Generation")
     
@@ -471,7 +478,7 @@ with tab2:
                     })
                 
                 preview_df = pd.DataFrame(preview_data)
-                st.dataframe(preview_df, use_container_width=True, hide_index=True)
+                st.dataframe(preview_df, width=True, hide_index=True)
                 
                 st.info(f"💡 Total scripts to generate: {len(selected_subtopics)}")
                 
@@ -539,9 +546,7 @@ with tab2:
             else:
                 st.info("👆 Please select at least one subtopic from the dropdown above")
 
-# =====================================================
 # SIDEBAR: API STATUS & INFO
-# =====================================================
 with st.sidebar:
     st.header("🔧 Service Info")
     
