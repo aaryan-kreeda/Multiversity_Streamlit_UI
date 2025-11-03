@@ -388,7 +388,7 @@ with tab1:
     
     with col_btn1:
         if st.button("🚀 Generate TOC (Synchronous)", type="primary", key="btn_create_toc_sync"):
-            with st.spinner("Generating TOC... This may take 30-60 seconds..."):
+            with st.spinner("Generating TOC... This may take 1-3 minutes..."):
                 payload = {
                     "project_id": project_id,
                     "question_id": question_id,
