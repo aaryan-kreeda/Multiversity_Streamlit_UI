@@ -21,9 +21,7 @@ load_dotenv()
 TOC_SERVICE_URL = os.getenv("TOC_SERVICE_URL") or st.secrets.get("TOC_SERVICE_URL", None)
 SCRIPT_SERVICE_URL = os.getenv("SCRIPT_SERVICE_URL") or st.secrets.get("SCRIPT_SERVICE_URL", None)
 
-TOC_CREATE_ENDPOINT = f"{TOC_SERVICE_URL}/create-course"
 TOC_CREATE_SYNC_ENDPOINT = f"{TOC_SERVICE_URL}/create-course-sync"
-TOC_UPDATE_ENDPOINT = f"{TOC_SERVICE_URL}/update-toc"
 SCRIPT_BATCH_ENDPOINT = f"{SCRIPT_SERVICE_URL}/generate-scripts-batch-streamlit"
 SCRIPT_SINGLE_ENDPOINT = f"{SCRIPT_SERVICE_URL}/generate-script-streamlit"
 
@@ -76,17 +74,6 @@ async def call_toc_create_sync(payload: Dict) -> Dict:
         response = await client.post(TOC_CREATE_SYNC_ENDPOINT, json=payload)
         return {"status_code": response.status_code, "data": response.json()}
 
-async def call_toc_create(payload: Dict) -> Dict:
-    """Call TOC creation endpoint (returns immediately with 202)"""
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        response = await client.post(TOC_CREATE_ENDPOINT, json=payload)
-        return {"status_code": response.status_code, "data": response.json()}
-
-async def call_toc_update(payload: Dict) -> Dict:
-    """Call TOC update endpoint (synchronous response)"""
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        response = await client.post(TOC_UPDATE_ENDPOINT, json=payload)
-        return {"status_code": response.status_code, "data": response.json()}
 
 async def call_script_batch(payload: Dict) -> Dict:
     """Call batch script generation endpoint"""
@@ -134,6 +121,9 @@ def display_toc_hierarchical(toc_data: Dict):
         subtopics = safe_list(maintopic_entry.get("subtopics"))
 
         maintopic_num = maintopic.get("maintopic_number", "")
+        # Handle both int and str for maintopic_number
+        if isinstance(maintopic_num, int):
+            maintopic_num = str(maintopic_num)
         maintopic_title = maintopic.get("title", "Untitled")
         maintopic_duration = maintopic.get("duration", "N/A")
         maintopic_difficulty = maintopic.get("difficulty_level", "")
@@ -161,6 +151,9 @@ def display_toc_hierarchical(toc_data: Dict):
                 continue
 
             subtopic_num = subtopic.get("subtopic_number", "")
+            # Handle both int and str for subtopic_number
+            if isinstance(subtopic_num, int):
+                subtopic_num = str(subtopic_num)
             subtopic_title = subtopic.get("title", "Untitled")
             subtopic_desc = safe_str(subtopic.get("description", ""), max_len=80)
             subtopic_duration = subtopic.get("duration_minutes", 0)
@@ -177,8 +170,13 @@ def display_toc_hierarchical(toc_data: Dict):
 
             for subnode in subnodes:
                 title = ""
+                duration_str = ""
                 if isinstance(subnode, dict):
+                    # New format: subnode is an object with title and duration_minutes
                     title = subnode.get("title") or subnode.get("name") or str(subnode)
+                    duration_minutes = subnode.get("duration_minutes", 0)
+                    if duration_minutes:
+                        duration_str = f"{duration_minutes} min"
                 else:
                     title = safe_str(subnode)
                 rows.append({
@@ -186,48 +184,10 @@ def display_toc_hierarchical(toc_data: Dict):
                     "Number": "",
                     "Title": title,
                     "Description": "",
-                    "Duration": "",
+                    "Duration": duration_str,
                     "Difficulty": ""
                 })
 
-    df = pd.DataFrame(rows)
-
-    # Display as table - use width=None (or an integer)
-    st.dataframe(
-        df,
-        width='stretch',
-        height=600,
-        hide_index=True
-    )
-
-    # Summary - use safe iteration (ignore non-dict entries)
-    sane_maintopics = [m for m in maintopics if isinstance(m, dict)]
-    maintopic_count = len(sane_maintopics)
-    subtopic_count = sum(len(safe_list(m.get("subtopics"))) for m in sane_maintopics)
-    subnode_count = sum(len(safe_list(sub.get("subnodes"))) for m in sane_maintopics for sub in safe_list(m.get("subtopics")))
-
-    # total duration
-    total_minutes = 0
-    for m in sane_maintopics:
-        for sub in safe_list(m.get("subtopics")):
-            duration = sub.get("duration_minutes", 0) if isinstance(sub, dict) else 0
-            if isinstance(duration, (int, float)):
-                total_minutes += duration
-    total_hours = total_minutes / 60 if total_minutes > 0 else 0
-
-    st.markdown("---")
-    st.markdown("### 📊 Course Summary")
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Maintopics", maintopic_count)
-    with col2:
-        st.metric("Subtopics", subtopic_count)
-    with col3:
-        st.metric("Subnodes", subnode_count)
-    with col4:
-        st.metric("Total Duration", f"{total_hours:.1f}h" if total_hours else "N/A")
-
-    
     # Create DataFrame
     df = pd.DataFrame(rows)
     
@@ -251,9 +211,8 @@ def display_toc_hierarchical(toc_data: Dict):
     st.markdown("---")
     st.markdown("### 📊 Course Summary")
 
-    col1, col2, col3, col4 = st.columns(4)
-
-    # Use previously sanitized maintopics list (sane_maintopics) where possible
+    # Use safe iteration (ignore non-dict entries)
+    sane_maintopics = [m for m in maintopics if isinstance(m, dict)]
     maintopic_count = len(sane_maintopics)
 
     # Count subtopics defensively
@@ -282,6 +241,7 @@ def display_toc_hierarchical(toc_data: Dict):
 
     total_hours = total_minutes / 60 if total_minutes > 0 else 0
 
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Maintopics", maintopic_count)
     with col2:
@@ -308,6 +268,9 @@ def extract_subtopics_from_toc(toc_data: Dict) -> List[Dict]:
         maintopic = safe_dict(maintopic_entry.get("maintopic"))
         subtopics = safe_list(maintopic_entry.get("subtopics"))
         maintopic_num = maintopic.get("maintopic_number", "")
+        # Handle both int and str for maintopic_number
+        if isinstance(maintopic_num, int):
+            maintopic_num = str(maintopic_num)
         maintopic_title = maintopic.get("title", "")
 
         for subtopic in subtopics:
@@ -322,15 +285,18 @@ def extract_subtopics_from_toc(toc_data: Dict) -> List[Dict]:
                     "full_number": f"{maintopic_num}.",
                     "display_name": f"{maintopic_num}. - {title}",
                     "description": "",
-                    "duration": 5,
+                    "duration": 0,
                     "subnodes": []
                 })
                 continue
 
             subtopic_num = subtopic.get("subtopic_number", "")
+            # Handle both int and str for subtopic_number
+            if isinstance(subtopic_num, int):
+                subtopic_num = str(subtopic_num)
             subtopic_title = subtopic.get("title", "")
             subtopic_desc = subtopic.get("description", "") or ""
-            subtopic_duration = subtopic.get("duration_minutes", 5) or 5
+            subtopic_duration = subtopic.get("duration_minutes", 0)
             subnodes = safe_list(subtopic.get("subnodes"))
 
             subtopics_list.append({
@@ -346,6 +312,65 @@ def extract_subtopics_from_toc(toc_data: Dict) -> List[Dict]:
             })
 
     return subtopics_list
+
+def extract_subnodes_from_toc(toc_data: Dict) -> List[Dict]:
+    """
+    Extract all subnodes from TOC for script generation dropdown (defensive).
+    Returns list of subnodes with their hierarchy information.
+    """
+    toc_data = safe_dict(toc_data)
+    maintopics = safe_list(toc_data.get("maintopics_with_subtopics"))
+    subnodes_list = []
+
+    for maintopic_entry in maintopics:
+        if not isinstance(maintopic_entry, dict):
+            continue
+        maintopic = safe_dict(maintopic_entry.get("maintopic"))
+        subtopics = safe_list(maintopic_entry.get("subtopics"))
+        maintopic_num = maintopic.get("maintopic_number", "")
+        # Handle both int and str for maintopic_number
+        if isinstance(maintopic_num, int):
+            maintopic_num = str(maintopic_num)
+        maintopic_title = maintopic.get("title", "")
+
+        for subtopic in subtopics:
+            if not isinstance(subtopic, dict):
+                continue
+            
+            subtopic_num = subtopic.get("subtopic_number", "")
+            # Handle both int and str for subtopic_number
+            if isinstance(subtopic_num, int):
+                subtopic_num = str(subtopic_num)
+            subtopic_title = subtopic.get("title", "")
+            subnodes = safe_list(subtopic.get("subnodes"))
+
+            # Extract subnodes with their index
+            for subnode_idx, subnode in enumerate(subnodes, 1):
+                if isinstance(subnode, dict):
+                    subnode_title = subnode.get("title", "") or subnode.get("name", "") or str(subnode)
+                    subnode_duration = subnode.get("duration_minutes", 0)
+                else:
+                    subnode_title = safe_str(subnode)
+                    subnode_duration = 0
+                
+                # Create full number like "1.2.1"
+                full_number = f"{maintopic_num}.{subtopic_num}.{subnode_idx}" if (maintopic_num and subtopic_num) else ""
+                
+                subnodes_list.append({
+                    "maintopic_number": maintopic_num,
+                    "maintopic_title": maintopic_title,
+                    "subtopic_number": subtopic_num,
+                    "subtopic_title": subtopic_title,
+                    "subnode_index": subnode_idx,
+                    "subnode_title": subnode_title,
+                    "full_number": full_number,
+                    "display_name": f"{full_number} - {subnode_title}" if full_number else subnode_title,
+                    "description": "",  # Subnodes typically don't have descriptions
+                    "duration": subnode_duration,
+                    "level": "subnode"
+                })
+
+    return subnodes_list
 
 
 # MAIN UI
@@ -374,43 +399,46 @@ with tab1:
         topic = st.text_input("Course Topic", value="Python Programming", key="toc_topic")
         course_hours = st.number_input("Course Duration (hours)", min_value=1, max_value=100, value=10, key="toc_hours")
         learner_path = st.selectbox("Learner Path", ["Professional", "Beginner", "Intermediate", "Advanced"], key="toc_path")
+        course_type = st.selectbox("Course Type", ["module", "session"], index=0, key="toc_course_type")
     
     with col2:
-        callback_url = st.text_input("Callback URL (optional, for async mode)", value="", key="toc_callback")
         regionality = st.text_input("Regionality", value="Global", key="toc_region")
         objectives = st.text_area("Learning Objectives (one per line)", 
                                   value="Master Python fundamentals\nBuild real-world applications", 
                                   key="toc_objectives")
         subtopics = st.text_area("Subtopics (one per line)", value="", key="toc_subtopics")
+        learning_outputs = st.text_area("Learning Outputs (one per line, optional)", value="", key="toc_learning_outputs")
         notes = st.text_area("Additional Notes", value="No additional notes", key="toc_notes")
     
-    col_btn1, col_btn2 = st.columns(2)
-    
-    with col_btn1:
-        if st.button("🚀 Generate TOC (Synchronous)", type="primary", key="btn_create_toc_sync"):
-            with st.spinner("Generating TOC... This may take 1-3 minutes..."):
-                payload = {
-                    "project_id": project_id,
-                    "question_id": question_id,
-                    "topic": topic,
-                    "course_hours": course_hours,
-                    "learner_path": learner_path,
-                    "callback_url": None,
-                    "regionality": regionality,
-                    "objective": objectives.split("\n") if objectives else [],
-                    "course_subtopics": subtopics.split("\n") if subtopics else [],
-                    "notes": notes
-                }
+    if st.button("🚀 Generate TOC", type="primary", key="btn_create_toc_sync"):
+        with st.spinner("Generating TOC... This may take 1-3 minutes..."):
+            payload = {
+                "topic": topic,
+                "course_hours": course_hours,
+                "learner_path": learner_path,
+                "course_type": course_type,
+                "objective": objectives.split("\n") if objectives else [],
+                "course_subtopics": subtopics.split("\n") if subtopics else [],
+                "learning_outputs": learning_outputs.split("\n") if learning_outputs else None,
+                "notes": notes if notes else None,
+                "regionality": regionality if regionality else None,
+                "question_id": question_id if question_id else None,
+                "project_id": project_id if project_id else None
+            }
+            # Remove None values to keep payload clean
+            payload = {k: v for k, v in payload.items() if v is not None}
+            
+            try:
+                start_time = time.time()
+                result = asyncio.run(call_toc_create_sync(payload))
+                elapsed = time.time() - start_time
                 
-                try:
-                    start_time = time.time()
-                    result = asyncio.run(call_toc_create_sync(payload))
-                    elapsed = time.time() - start_time
+                if result["status_code"] == 200:
+                    data = result["data"]
                     
-                    if result["status_code"] == 200:
-                        st.session_state.toc_response = result["data"]
-                        
-                        data = result["data"]
+                    # Check for success field in response
+                    if data.get("success", True):
+                        st.session_state.toc_response = data
                         st.success(f"✅ TOC generated successfully in {elapsed:.2f}s!")
                         
                         # Display generation metrics
@@ -426,56 +454,27 @@ with tab1:
                             st.metric("Execution Time", f"{exec_time}s")
                         
                         st.markdown("---")
-                        
-                        # Store the TOC data in session state
-                        st.session_state.toc_response = result["data"]
-                        
                     else:
-                        st.error(f"❌ Error: Status {result['status_code']}")
-                        st.json(result["data"])
-                except httpx.HTTPStatusError as e:
-                    st.error(f"❌ HTTP Error: {e.response.status_code}")
-                    st.error(f"Response: {e.response.text}")
-                except httpx.RequestError as e:
-                    st.error(f"❌ Request Error: {str(e)}")
-                    if hasattr(e, 'request'):
-                        st.error(f"URL attempted: {e.request.url}")
-                    import traceback
-                    st.code(traceback.format_exc())
-
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
-                    import traceback
-                    st.code(traceback.format_exc())
-    
-    with col_btn2:
-        if st.button("⚡ Start Async Generation", key="btn_create_toc_async"):
-            with st.spinner("Sending async TOC creation request..."):
-                payload = {
-                    "project_id": project_id,
-                    "question_id": question_id,
-                    "topic": topic,
-                    "course_hours": course_hours,
-                    "learner_path": learner_path,
-                    "callback_url": callback_url if callback_url else None,
-                    "regionality": regionality,
-                    "objective": objectives.split("\n") if objectives else [],
-                    "course_subtopics": subtopics.split("\n") if subtopics else [],
-                    "notes": notes
-                }
-                
-                try:
-                    result = asyncio.run(call_toc_create(payload))
-                    
-                    if result["status_code"] == 202:
-                        st.success("✅ TOC generation started! (Status: 202 Accepted)")
-                        st.info("The service is processing in the background. Check your callback URL for results.")
-                        st.json(result["data"])
-                    else:
-                        st.warning(f"Received status code: {result['status_code']}")
-                        st.json(result["data"])
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
+                        # Error response format
+                        error_msg = data.get("message", "Unknown error")
+                        st.error(f"❌ Error: {error_msg}")
+                        st.json(data)
+                else:
+                    st.error(f"❌ Error: Status {result['status_code']}")
+                    st.json(result["data"])
+            except httpx.HTTPStatusError as e:
+                st.error(f"❌ HTTP Error: {e.response.status_code}")
+                st.error(f"Response: {e.response.text}")
+            except httpx.RequestError as e:
+                st.error(f"❌ Request Error: {str(e)}")
+                if hasattr(e, 'request'):
+                    st.error(f"URL attempted: {e.request.url}")
+                import traceback
+                st.code(traceback.format_exc())
+            except Exception as e:
+                st.error(f"❌ Error: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc())
     
     # Only display TOC when first generated
     if st.session_state.toc_response:
@@ -508,13 +507,16 @@ with tab2:
         toc_data = st.session_state.toc_response.get("toc", {})
         course_metadata = st.session_state.toc_response.get("course_metadata", {})
         
-        # Extract subtopics for dropdown
+        # Extract subtopics and subnodes for dropdown
         available_subtopics = extract_subtopics_from_toc(toc_data)
+        available_subnodes = extract_subnodes_from_toc(toc_data)
         
-        if not available_subtopics:
-            st.error("❌ No subtopics found in the TOC. Please regenerate the TOC.")
+        if not available_subtopics and not available_subnodes:
+            st.error("❌ No subtopics or subnodes found in the TOC. Please regenerate the TOC.")
         else:
-            st.success(f"✅ Found {len(available_subtopics)} subtopics from TOC")
+            subtopic_count = len(available_subtopics) if available_subtopics else 0
+            subnode_count = len(available_subnodes) if available_subnodes else 0
+            st.success(f"✅ Found {subtopic_count} subtopics and {subnode_count} subnodes from TOC")
             
             # Display course metadata
             with st.expander("📚 Course Information", expanded=False):
@@ -537,12 +539,17 @@ with tab2:
             
             with col_settings1:
                 region = st.text_input("Region", value="Pan India", key="script_region")
+                learner_path_options = ["Beginner", "Intermediate", "Advanced", "Professional"]
+                default_learner_path = course_metadata.get('learner_path', 'Professional')
+                try:
+                    default_index = learner_path_options.index(default_learner_path)
+                except ValueError:
+                    default_index = 3  # Default to "Professional" if not found
+                
                 learners_path = st.selectbox(
                     "Learner's Path", 
-                    ["Beginner", "Intermediate", "Advanced", "Professional"],
-                    index=["Beginner", "Intermediate", "Advanced", "Professional"].index(
-                        course_metadata.get('learner_path', 'Professional')
-                    ),
+                    learner_path_options,
+                    index=default_index,
                     key="script_learner_path"
                 )
             
@@ -556,63 +563,133 @@ with tab2:
             
             st.markdown("---")
             
-            # Subtopic selection
-            st.subheader("Select Subtopics for Script Generation")
+            # Subtopic and Subnode selection
+            st.subheader("Select Subtopics and Subnodes for Script Generation")
             
-            # Create options for multiselect
-            subtopic_options = [sub["display_name"] for sub in available_subtopics]
+            col_select1, col_select2 = st.columns(2)
             
-            # Multiselect for subtopics
-            selected_display_names = st.multiselect(
-                "Choose subtopics (you can select multiple):",
-                options=subtopic_options,
-                default=[],
-                help="Select one or more subtopics to generate scripts for",
-                key="subtopic_multiselect"
-            )
-            
-            # Show selected subtopics details
-            if selected_display_names:
-                st.markdown("### Selected Subtopics Preview")
+            with col_select1:
+                # Create options for subtopic multiselect
+                subtopic_options = [sub["display_name"] for sub in available_subtopics] if available_subtopics else []
                 
-                selected_subtopics = [
-                    sub for sub in available_subtopics 
-                    if sub["display_name"] in selected_display_names
-                ]
+                # Multiselect for subtopics
+                selected_subtopic_names = st.multiselect(
+                    "Choose subtopics (you can select multiple):",
+                    options=subtopic_options,
+                    default=[],
+                    help="Select one or more subtopics to generate scripts for",
+                    key="subtopic_multiselect"
+                )
+            
+            with col_select2:
+                # Create options for subnode multiselect
+                subnode_options = [sub["display_name"] for sub in available_subnodes] if available_subnodes else []
                 
-                # Display as a table
+                # Multiselect for subnodes
+                selected_subnode_names = st.multiselect(
+                    "Choose subnodes (you can select multiple):",
+                    options=subnode_options,
+                    default=[],
+                    help="Select one or more subnodes to generate scripts for",
+                    key="subnode_multiselect"
+                )
+            
+            # Combine selected subtopics and subnodes
+            selected_subtopics = [
+                sub for sub in available_subtopics 
+                if sub["display_name"] in selected_subtopic_names
+            ] if available_subtopics else []
+            
+            selected_subnodes = [
+                sub for sub in available_subnodes 
+                if sub["display_name"] in selected_subnode_names
+            ] if available_subnodes else []
+            
+            # Show selected items details in single table maintaining hierarchy
+            if selected_subtopics or selected_subnodes:
+                st.markdown("### Selected Items Preview")
+                
+                # Display as a table maintaining hierarchy
                 preview_data = []
+                
+                # Add subtopics first
                 for sub in selected_subtopics:
                     preview_data.append({
                         "Number": sub["full_number"],
+                        "Level": "Subtopic",
                         "Title": sub["subtopic_title"],
                         "Maintopic": sub["maintopic_title"],
-                        "Duration": f"{sub['duration']} min",
+                        "Duration": f"{sub['duration']} min" if sub['duration'] else "N/A",
                         "Description": safe_str(sub.get("description"), max_len=50)
-
                     })
                 
-                preview_df = pd.DataFrame(preview_data)
-                st.dataframe(preview_df, width='stretch', hide_index=True)
+                # Add subnodes (they will appear after their parent subtopics in the list)
+                for subnode in selected_subnodes:
+                    preview_data.append({
+                        "Number": subnode["full_number"],
+                        "Level": "Subnode",
+                        "Title": subnode["subnode_title"],
+                        "Maintopic": subnode["maintopic_title"],
+                        "Duration": f"{subnode['duration']} min" if subnode['duration'] else "N/A",
+                        "Description": safe_str(subnode.get("description"), max_len=50)
+                    })
                 
-                st.info(f"💡 Total scripts to generate: {len(selected_subtopics)}")
+                if preview_data:
+                    preview_df = pd.DataFrame(preview_data)
+                    st.dataframe(preview_df, width='stretch', hide_index=True)
+                    
+                    total_items = len(selected_subtopics) + len(selected_subnodes)
+                    st.info(f"💡 Total scripts to generate: {total_items} ({len(selected_subtopics)} subtopics + {len(selected_subnodes)} subnodes)")
+                else:
+                    st.info("👆 Please select at least one subtopic or subnode from the dropdowns above")
                 
                 # Generate Scripts Button
-                if st.button("🚀 Generate Scripts for Selected Subtopics", type="primary", key="btn_generate_scripts"):
-                    with st.spinner(f"Generating {len(selected_subtopics)} scripts concurrently..."):
+                total_selected = len(selected_subtopics) + len(selected_subnodes)
+                if st.button("🚀 Generate Scripts for Selected Items", type="primary", key="btn_generate_scripts"):
+                    with st.spinner(f"Generating {total_selected} scripts concurrently..."):
                         # Build batch request payload
+                        # Get project_id from TOC response or use default
+                        toc_project_id = st.session_state.toc_response.get("project_id", "proj_001")
+                        
                         batch_scripts = []
+                        script_counter = 1
+                        
+                        # Add subtopics to batch
                         for sub in selected_subtopics:
                             batch_scripts.append({
                                 "region": region,
                                 "sub_topic": sub["subtopic_title"],
                                 "learners_path": learners_path,
                                 "description": sub["description"] or f"Educational content for {sub['subtopic_title']}",
-                                "duration": sub["duration"],
-                                "script_type": default_script_type
+                                "duration": sub["duration"],  # Use actual duration from TOC
+                                "script_type": default_script_type,
+                                "maintopic": sub.get("maintopic_title", ""),
+                                "level": "subtopic",
+                                "number": sub.get("full_number", ""),
+                                "script_id": f"script_{script_counter:03d}_{sub['subtopic_title'][:20].replace(' ', '_')}"
                             })
+                            script_counter += 1
                         
-                        payload = {"scripts": batch_scripts}
+                        # Add subnodes to batch
+                        for subnode in selected_subnodes:
+                            batch_scripts.append({
+                                "region": region,
+                                "sub_topic": subnode["subnode_title"],
+                                "learners_path": learners_path,
+                                "description": subnode.get("description", "") or f"Educational content for {subnode['subnode_title']}",
+                                "duration": subnode["duration"],  # Use actual duration from TOC
+                                "script_type": default_script_type,
+                                "maintopic": subnode.get("maintopic_title", ""),
+                                "level": "subnode",
+                                "number": subnode.get("full_number", ""),
+                                "script_id": f"script_{script_counter:03d}_{subnode['subnode_title'][:20].replace(' ', '_')}"
+                            })
+                            script_counter += 1
+                        
+                        payload = {
+                            "project_id": toc_project_id,
+                            "scripts": batch_scripts
+                        }
                         
                         try:
                             start_time = time.time()
@@ -621,24 +698,36 @@ with tab2:
                             
                             if result["status_code"] == 200:
                                 data = result["data"]
-                                st.success(f"✅ Batch completed in {elapsed:.2f}s | Success: {data['successful']} | Failed: {data['failed']}")
+                                total_scripts = data.get("total_scripts", len(data.get("scripts", [])))
+                                successful = data.get("successful", 0)
+                                failed = data.get("failed", 0)
+                                st.success(f"✅ Batch completed in {elapsed:.2f}s | Total: {total_scripts} | Success: {successful} | Failed: {failed}")
                                 
                                 # Display successful scripts
-                                if data["scripts"]:
+                                if data.get("scripts"):
                                     st.markdown("### ✅ Generated Scripts")
                                     
                                     for idx, script in enumerate(data["scripts"], 1):
-                                        # Find corresponding subtopic info
+                                        # Find corresponding subtopic or subnode info
                                         matching_sub = next(
                                             (s for s in selected_subtopics if s["subtopic_title"] == script["sub_topic"]),
                                             None
                                         )
+                                        matching_subnode = next(
+                                            (s for s in selected_subnodes if s["subnode_title"] == script["sub_topic"]),
+                                            None
+                                        ) if not matching_sub else None
+                                        
+                                        matching_item = matching_sub or matching_subnode
                                         
                                         header_text = f"{idx}. {script['sub_topic']} ({script['script_type']})"
-                                        if matching_sub:
-                                            header_text = f"{idx}. [{matching_sub['full_number']}] {script['sub_topic']} ({script['script_type']})"
+                                        if matching_item:
+                                            header_text = f"{idx}. [{matching_item['full_number']}] {script['sub_topic']} ({script['script_type']})"
                                         
                                         with st.expander(header_text, expanded=False):
+                                            # Display character names if available (for Character Based scripts)
+                                            if script.get("character_names"):
+                                                st.info(f"**Characters:** {', '.join(script['character_names'])}")
                                             st.text_area(
                                                 "Script Content", 
                                                 value=script["script"], 
@@ -647,10 +736,13 @@ with tab2:
                                             )
                                 
                                 # Display errors
-                                if data["errors"]:
+                                if data.get("errors"):
                                     st.markdown("### ❌ Errors")
                                     for error in data["errors"]:
-                                        st.error(f"**{error.get('sub_topic', 'Unknown')}**: {error.get('error', 'Unknown error')}")
+                                        if isinstance(error, dict):
+                                            st.error(f"**{error.get('sub_topic', 'Unknown')}**: {error.get('error', 'Unknown error')}")
+                                        else:
+                                            st.error(f"Error: {error}")
                                 
                                 st.session_state.script_response = result
                             else:
@@ -659,7 +751,7 @@ with tab2:
                         except Exception as e:
                             st.error(f"❌ Error: {str(e)}")
             else:
-                st.info("👆 Please select at least one subtopic from the dropdown above")
+                st.info("👆 Please select at least one subtopic or subnode from the dropdowns above")
 
 # SIDEBAR: API STATUS & INFO
 with st.sidebar:
@@ -667,11 +759,11 @@ with st.sidebar:
     
     st.markdown("**TOC Service**")
     st.code(TOC_SERVICE_URL, language="text")
-    st.caption("Endpoints: /create-course (async), /create-course-sync (sync), /update-toc")
+    st.caption("Endpoint: /create-course-sync")
     
     st.markdown("**Script Service**")
     st.code(SCRIPT_SERVICE_URL, language="text")
-    st.caption("Endpoints: /generate-script, /generate-scripts-batch")
+    st.caption("Endpoints: /generate-script-streamlit, /generate-scripts-batch-streamlit")
     
     st.markdown("---")
     
