@@ -685,8 +685,16 @@ with tab2:
                         
                         with st.spinner(f"Generating {total_selected} scripts concurrently..."):
                             # Build batch request payload
-                            # Get project_id from TOC response or use default
-                            toc_project_id = st.session_state.toc_response.get("project_id", "proj_001")
+                            # Get project_id from TOC response, fallback to input field, or use default
+                            toc_response_project_id = st.session_state.toc_response.get("project_id")
+                            # Check if project_id from response is None or empty, then use input field value
+                            if toc_response_project_id and str(toc_response_project_id).strip():
+                                toc_project_id = str(toc_response_project_id).strip()
+                            else:
+                                # Fallback to the project_id from TOC generation input field
+                                toc_project_id = st.session_state.get("toc_project_id", "proj_001")
+                                if not toc_project_id or not str(toc_project_id).strip():
+                                    toc_project_id = "proj_001"  # Final fallback
                             
                             batch_scripts = []
                             script_counter = 1
