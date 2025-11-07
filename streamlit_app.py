@@ -88,10 +88,14 @@ async def call_script_single(payload: Dict) -> Dict:
         return {"status_code": response.status_code, "data": response.json()}
 
 # DISPLAY HELPERS
-def display_toc_hierarchical(toc_data: Dict):
+def display_toc_hierarchical(toc_data: Dict, course_hours: float = None):
     """
     Display TOC in hierarchical table format: Maintopic → Subtopic → Subnode
     This version is defensive against None values and unexpected types.
+    
+    Args:
+        toc_data: TOC data dictionary
+        course_hours: Total course hours from course_metadata (optional)
     """
     toc_data = safe_dict(toc_data)
     maintopics = safe_list(toc_data.get("maintopics_with_subtopics"))
@@ -215,31 +219,37 @@ def display_toc_hierarchical(toc_data: Dict):
     sane_maintopics = [m for m in maintopics if isinstance(m, dict)]
     maintopic_count = len(sane_maintopics)
 
-    # Count subtopics defensively
+    # Count subtopics defensively (only valid dict entries)
     subtopic_count = 0
     for m in sane_maintopics:
-        subtopic_count += safe_len(m.get("subtopics"))
+        subtopics = safe_list(m.get("subtopics"))
+        for sub in subtopics:
+            if isinstance(sub, dict):
+                subtopic_count += 1
 
-    # Count subnodes defensively
+    # Count subnodes defensively (only valid dict entries)
     subnode_count = 0
     for m in sane_maintopics:
         for sub in safe_list(m.get("subtopics")):
             if isinstance(sub, dict):
-                subnode_count += safe_len(sub.get("subnodes"))
-            else:
-                # if sub is a list-like, count its items; otherwise ignore
-                subnode_count += safe_len(sub) if isinstance(sub, (list, tuple)) else 0
+                subnodes = safe_list(sub.get("subnodes"))
+                for subnode in subnodes:
+                    if isinstance(subnode, dict):
+                        subnode_count += 1
 
-    # Calculate total duration defensively
-    total_minutes = 0
-    for m in sane_maintopics:
-        for sub in safe_list(m.get("subtopics")):
-            if isinstance(sub, dict):
-                duration = sub.get("duration_minutes", 0) or 0
-                if isinstance(duration, (int, float)):
-                    total_minutes += duration
-
-    total_hours = total_minutes / 60 if total_minutes > 0 else 0
+    # Use course_hours from metadata if provided, otherwise calculate from subtopics
+    if course_hours is not None and course_hours > 0:
+        total_hours = course_hours
+    else:
+        # Calculate total duration defensively from subtopics as fallback
+        total_minutes = 0
+        for m in sane_maintopics:
+            for sub in safe_list(m.get("subtopics")):
+                if isinstance(sub, dict):
+                    duration = sub.get("duration_minutes", 0) or 0
+                    if isinstance(duration, (int, float)):
+                        total_minutes += duration
+        total_hours = total_minutes / 60 if total_minutes > 0 else 0
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -384,6 +394,10 @@ if "script_response" not in st.session_state:
     st.session_state.script_response = None
 if "selected_subtopics_for_scripts" not in st.session_state:
     st.session_state.selected_subtopics_for_scripts = []
+if "toc_request_in_progress" not in st.session_state:
+    st.session_state.toc_request_in_progress = False
+if "script_request_in_progress" not in st.session_state:
+    st.session_state.script_request_in_progress = False
 
 # TAB 1: TOC GENERATION
 tab1, tab2 = st.tabs(["🎯 Generate TOC", "📝 Generate Scripts"])
@@ -410,71 +424,82 @@ with tab1:
         learning_outputs = st.text_area("Learning Outputs (one per line, optional)", value="", key="toc_learning_outputs")
         notes = st.text_area("Additional Notes", value="No additional notes", key="toc_notes")
     
-    if st.button("🚀 Generate TOC", type="primary", key="btn_create_toc_sync"):
-        with st.spinner("Generating TOC... This may take 1-3 minutes..."):
-            payload = {
-                "topic": topic,
-                "course_hours": course_hours,
-                "learner_path": learner_path,
-                "course_type": course_type,
-                "objective": objectives.split("\n") if objectives else [],
-                "course_subtopics": subtopics.split("\n") if subtopics else [],
-                "learning_outputs": learning_outputs.split("\n") if learning_outputs else None,
-                "notes": notes if notes else None,
-                "regionality": regionality if regionality else None,
-                "question_id": question_id if question_id else None,
-                "project_id": project_id if project_id else None
-            }
-            # Remove None values to keep payload clean
-            payload = {k: v for k, v in payload.items() if v is not None}
+    # Check if request is already in progress
+    if st.session_state.toc_request_in_progress:
+        st.warning("⏳ TOC generation is already in progress. Please wait...")
+        st.button("🚀 Generate TOC", type="primary", key="btn_create_toc_sync", disabled=True)
+    else:
+        if st.button("🚀 Generate TOC", type="primary", key="btn_create_toc_sync"):
+            # Set flag to prevent duplicate requests
+            st.session_state.toc_request_in_progress = True
             
-            try:
-                start_time = time.time()
-                result = asyncio.run(call_toc_create_sync(payload))
-                elapsed = time.time() - start_time
+            with st.spinner("Generating TOC... This may take 1-3 minutes..."):
+                payload = {
+                    "topic": topic,
+                    "course_hours": course_hours,
+                    "learner_path": learner_path,
+                    "course_type": course_type,
+                    "objective": objectives.split("\n") if objectives else [],
+                    "course_subtopics": subtopics.split("\n") if subtopics else [],
+                    "learning_outputs": learning_outputs.split("\n") if learning_outputs else None,
+                    "notes": notes if notes else None,
+                    "regionality": regionality if regionality else None,
+                    "question_id": question_id if question_id else None,
+                    "project_id": project_id if project_id else None
+                }
+                # Remove None values to keep payload clean
+                payload = {k: v for k, v in payload.items() if v is not None}
                 
-                if result["status_code"] == 200:
-                    data = result["data"]
+                try:
+                    start_time = time.time()
+                    result = asyncio.run(call_toc_create_sync(payload))
+                    elapsed = time.time() - start_time
                     
-                    # Check for success field in response
-                    if data.get("success", True):
-                        st.session_state.toc_response = data
-                        st.success(f"✅ TOC generated successfully in {elapsed:.2f}s!")
+                    if result["status_code"] == 200:
+                        data = result["data"]
                         
-                        # Display generation metrics
-                        col_m1, col_m2, col_m3 = st.columns(3)
-                        with col_m1:
-                            maintopics_count = len(data.get("toc", {}).get("maintopics_with_subtopics", []))
-                            st.metric("Maintopics", maintopics_count)
-                        with col_m2:
-                            cost = data.get("cost_summary", {}).get("total_cost_usd", 0)
-                            st.metric("Cost", f"${cost:.4f}")
-                        with col_m3:
-                            exec_time = data.get("execution_time_s", 0)
-                            st.metric("Execution Time", f"{exec_time}s")
-                        
-                        st.markdown("---")
+                        # Check for success field in response
+                        if data.get("success", True):
+                            st.session_state.toc_response = data
+                            st.success(f"✅ TOC generated successfully in {elapsed:.2f}s!")
+                            
+                            # Display generation metrics
+                            col_m1, col_m2, col_m3 = st.columns(3)
+                            with col_m1:
+                                maintopics_count = len(data.get("toc", {}).get("maintopics_with_subtopics", []))
+                                st.metric("Maintopics", maintopics_count)
+                            with col_m2:
+                                cost = data.get("cost_summary", {}).get("total_cost_usd", 0)
+                                st.metric("Cost", f"${cost:.4f}")
+                            with col_m3:
+                                exec_time = data.get("execution_time_s", 0)
+                                st.metric("Execution Time", f"{exec_time}s")
+                            
+                            st.markdown("---")
+                        else:
+                            # Error response format
+                            error_msg = data.get("message", "Unknown error")
+                            st.error(f"❌ Error: {error_msg}")
+                            st.json(data)
                     else:
-                        # Error response format
-                        error_msg = data.get("message", "Unknown error")
-                        st.error(f"❌ Error: {error_msg}")
-                        st.json(data)
-                else:
-                    st.error(f"❌ Error: Status {result['status_code']}")
-                    st.json(result["data"])
-            except httpx.HTTPStatusError as e:
-                st.error(f"❌ HTTP Error: {e.response.status_code}")
-                st.error(f"Response: {e.response.text}")
-            except httpx.RequestError as e:
-                st.error(f"❌ Request Error: {str(e)}")
-                if hasattr(e, 'request'):
-                    st.error(f"URL attempted: {e.request.url}")
-                import traceback
-                st.code(traceback.format_exc())
-            except Exception as e:
-                st.error(f"❌ Error: {str(e)}")
-                import traceback
-                st.code(traceback.format_exc())
+                        st.error(f"❌ Error: Status {result['status_code']}")
+                        st.json(result["data"])
+                except httpx.HTTPStatusError as e:
+                    st.error(f"❌ HTTP Error: {e.response.status_code}")
+                    st.error(f"Response: {e.response.text}")
+                except httpx.RequestError as e:
+                    st.error(f"❌ Request Error: {str(e)}")
+                    if hasattr(e, 'request'):
+                        st.error(f"URL attempted: {e.request.url}")
+                    import traceback
+                    st.code(traceback.format_exc())
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
+                finally:
+                    # Always reset the flag when request completes (success or error)
+                    st.session_state.toc_request_in_progress = False
     
     # Only display TOC when first generated
     if st.session_state.toc_response:
@@ -483,9 +508,12 @@ with tab1:
         
         # Display TOC as hierarchical view
         toc_data = st.session_state.toc_response.get("toc") or {}
+        course_metadata = st.session_state.toc_response.get("course_metadata", {})
+        course_hours = course_metadata.get("course_hours")
+        
         if toc_data and toc_data.get("maintopics_with_subtopics"):
             try:
-                display_toc_hierarchical(toc_data)
+                display_toc_hierarchical(toc_data, course_hours=course_hours)
             except Exception as display_error:
                 st.error(f"Error displaying TOC: {str(display_error)}")
                 with st.expander("View raw TOC data"):
@@ -645,111 +673,123 @@ with tab2:
                 
                 # Generate Scripts Button
                 total_selected = len(selected_subtopics) + len(selected_subnodes)
-                if st.button("🚀 Generate Scripts for Selected Items", type="primary", key="btn_generate_scripts"):
-                    with st.spinner(f"Generating {total_selected} scripts concurrently..."):
-                        # Build batch request payload
-                        # Get project_id from TOC response or use default
-                        toc_project_id = st.session_state.toc_response.get("project_id", "proj_001")
+                
+                # Check if request is already in progress
+                if st.session_state.script_request_in_progress:
+                    st.warning("⏳ Script generation is already in progress. Please wait...")
+                    st.button("🚀 Generate Scripts for Selected Items", type="primary", key="btn_generate_scripts", disabled=True)
+                else:
+                    if st.button("🚀 Generate Scripts for Selected Items", type="primary", key="btn_generate_scripts"):
+                        # Set flag to prevent duplicate requests
+                        st.session_state.script_request_in_progress = True
                         
-                        batch_scripts = []
-                        script_counter = 1
-                        
-                        # Add subtopics to batch
-                        for sub in selected_subtopics:
-                            batch_scripts.append({
-                                "region": region,
-                                "sub_topic": sub["subtopic_title"],
-                                "learners_path": learners_path,
-                                "description": sub["description"] or f"Educational content for {sub['subtopic_title']}",
-                                "duration": sub["duration"],  # Use actual duration from TOC
-                                "script_type": default_script_type,
-                                "maintopic": sub.get("maintopic_title", ""),
-                                "level": "subtopic",
-                                "number": sub.get("full_number", ""),
-                                "script_id": f"script_{script_counter:03d}_{sub['subtopic_title'][:20].replace(' ', '_')}"
-                            })
-                            script_counter += 1
-                        
-                        # Add subnodes to batch
-                        for subnode in selected_subnodes:
-                            batch_scripts.append({
-                                "region": region,
-                                "sub_topic": subnode["subnode_title"],
-                                "learners_path": learners_path,
-                                "description": subnode.get("description", "") or f"Educational content for {subnode['subnode_title']}",
-                                "duration": subnode["duration"],  # Use actual duration from TOC
-                                "script_type": default_script_type,
-                                "maintopic": subnode.get("maintopic_title", ""),
-                                "level": "subnode",
-                                "number": subnode.get("full_number", ""),
-                                "script_id": f"script_{script_counter:03d}_{subnode['subnode_title'][:20].replace(' ', '_')}"
-                            })
-                            script_counter += 1
-                        
-                        payload = {
-                            "project_id": toc_project_id,
-                            "scripts": batch_scripts
-                        }
-                        
-                        try:
-                            start_time = time.time()
-                            result = asyncio.run(call_script_batch(payload))
-                            elapsed = time.time() - start_time
+                        with st.spinner(f"Generating {total_selected} scripts concurrently..."):
+                            # Build batch request payload
+                            # Get project_id from TOC response or use default
+                            toc_project_id = st.session_state.toc_response.get("project_id", "proj_001")
                             
-                            if result["status_code"] == 200:
-                                data = result["data"]
-                                total_scripts = data.get("total_scripts", len(data.get("scripts", [])))
-                                successful = data.get("successful", 0)
-                                failed = data.get("failed", 0)
-                                st.success(f"✅ Batch completed in {elapsed:.2f}s | Total: {total_scripts} | Success: {successful} | Failed: {failed}")
+                            batch_scripts = []
+                            script_counter = 1
+                            
+                            # Add subtopics to batch
+                            for sub in selected_subtopics:
+                                batch_scripts.append({
+                                    "region": region,
+                                    "sub_topic": sub["subtopic_title"],
+                                    "learners_path": learners_path,
+                                    "description": sub["description"] or f"Educational content for {sub['subtopic_title']}",
+                                    "duration": sub["duration"],  # Use actual duration from TOC
+                                    "script_type": default_script_type,
+                                    "maintopic": sub.get("maintopic_title", ""),
+                                    "level": "subtopic",
+                                    "number": sub.get("full_number", ""),
+                                    "script_id": f"script_{script_counter:03d}_{sub['subtopic_title'][:20].replace(' ', '_')}"
+                                })
+                                script_counter += 1
+                            
+                            # Add subnodes to batch
+                            for subnode in selected_subnodes:
+                                batch_scripts.append({
+                                    "region": region,
+                                    "sub_topic": subnode["subnode_title"],
+                                    "learners_path": learners_path,
+                                    "description": subnode.get("description", "") or f"Educational content for {subnode['subnode_title']}",
+                                    "duration": subnode["duration"],  # Use actual duration from TOC
+                                    "script_type": default_script_type,
+                                    "maintopic": subnode.get("maintopic_title", ""),
+                                    "level": "subnode",
+                                    "number": subnode.get("full_number", ""),
+                                    "script_id": f"script_{script_counter:03d}_{subnode['subnode_title'][:20].replace(' ', '_')}"
+                                })
+                                script_counter += 1
+                            
+                            payload = {
+                                "project_id": toc_project_id,
+                                "scripts": batch_scripts
+                            }
+                            
+                            try:
+                                start_time = time.time()
+                                result = asyncio.run(call_script_batch(payload))
+                                elapsed = time.time() - start_time
                                 
-                                # Display successful scripts
-                                if data.get("scripts"):
-                                    st.markdown("### ✅ Generated Scripts")
+                                if result["status_code"] == 200:
+                                    data = result["data"]
+                                    total_scripts = data.get("total_scripts", len(data.get("scripts", [])))
+                                    successful = data.get("successful", 0)
+                                    failed = data.get("failed", 0)
+                                    st.success(f"✅ Batch completed in {elapsed:.2f}s | Total: {total_scripts} | Success: {successful} | Failed: {failed}")
                                     
-                                    for idx, script in enumerate(data["scripts"], 1):
-                                        # Find corresponding subtopic or subnode info
-                                        matching_sub = next(
-                                            (s for s in selected_subtopics if s["subtopic_title"] == script["sub_topic"]),
-                                            None
-                                        )
-                                        matching_subnode = next(
-                                            (s for s in selected_subnodes if s["subnode_title"] == script["sub_topic"]),
-                                            None
-                                        ) if not matching_sub else None
+                                    # Display successful scripts
+                                    if data.get("scripts"):
+                                        st.markdown("### ✅ Generated Scripts")
                                         
-                                        matching_item = matching_sub or matching_subnode
-                                        
-                                        header_text = f"{idx}. {script['sub_topic']} ({script['script_type']})"
-                                        if matching_item:
-                                            header_text = f"{idx}. [{matching_item['full_number']}] {script['sub_topic']} ({script['script_type']})"
-                                        
-                                        with st.expander(header_text, expanded=False):
-                                            # Display character names if available (for Character Based scripts)
-                                            if script.get("character_names"):
-                                                st.info(f"**Characters:** {', '.join(script['character_names'])}")
-                                            st.text_area(
-                                                "Script Content", 
-                                                value=script["script"], 
-                                                height=400, 
-                                                key=f"output_{idx}_{script['sub_topic']}"
+                                        for idx, script in enumerate(data["scripts"], 1):
+                                            # Find corresponding subtopic or subnode info
+                                            matching_sub = next(
+                                                (s for s in selected_subtopics if s["subtopic_title"] == script["sub_topic"]),
+                                                None
                                             )
-                                
-                                # Display errors
-                                if data.get("errors"):
-                                    st.markdown("### ❌ Errors")
-                                    for error in data["errors"]:
-                                        if isinstance(error, dict):
-                                            st.error(f"**{error.get('sub_topic', 'Unknown')}**: {error.get('error', 'Unknown error')}")
-                                        else:
-                                            st.error(f"Error: {error}")
-                                
-                                st.session_state.script_response = result
-                            else:
-                                st.error(f"❌ Error: Status {result['status_code']}")
-                                st.json(result["data"])
-                        except Exception as e:
-                            st.error(f"❌ Error: {str(e)}")
+                                            matching_subnode = next(
+                                                (s for s in selected_subnodes if s["subnode_title"] == script["sub_topic"]),
+                                                None
+                                            ) if not matching_sub else None
+                                            
+                                            matching_item = matching_sub or matching_subnode
+                                            
+                                            header_text = f"{idx}. {script['sub_topic']} ({script['script_type']})"
+                                            if matching_item:
+                                                header_text = f"{idx}. [{matching_item['full_number']}] {script['sub_topic']} ({script['script_type']})"
+                                            
+                                            with st.expander(header_text, expanded=False):
+                                                # Display character names if available (for Character Based scripts)
+                                                if script.get("character_names"):
+                                                    st.info(f"**Characters:** {', '.join(script['character_names'])}")
+                                                st.text_area(
+                                                    "Script Content", 
+                                                    value=script["script"], 
+                                                    height=400, 
+                                                    key=f"output_{idx}_{script['sub_topic']}"
+                                                )
+                                    
+                                    # Display errors
+                                    if data.get("errors"):
+                                        st.markdown("### ❌ Errors")
+                                        for error in data["errors"]:
+                                            if isinstance(error, dict):
+                                                st.error(f"**{error.get('sub_topic', 'Unknown')}**: {error.get('error', 'Unknown error')}")
+                                            else:
+                                                st.error(f"Error: {error}")
+                                    
+                                    st.session_state.script_response = result
+                                else:
+                                    st.error(f"❌ Error: Status {result['status_code']}")
+                                    st.json(result["data"])
+                            except Exception as e:
+                                st.error(f"❌ Error: {str(e)}")
+                            finally:
+                                # Always reset the flag when request completes (success or error)
+                                st.session_state.script_request_in_progress = False
             else:
                 st.info("👆 Please select at least one subtopic or subnode from the dropdowns above")
 
