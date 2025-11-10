@@ -780,14 +780,27 @@ with tab2:
                                                     key=f"output_{idx}_{script['sub_topic']}"
                                                 )
                                     
-                                    # Display errors
-                                    if data.get("errors"):
-                                        st.markdown("### ❌ Errors")
-                                        for error in data["errors"]:
-                                            if isinstance(error, dict):
-                                                st.error(f"**{error.get('sub_topic', 'Unknown')}**: {error.get('error', 'Unknown error')}")
-                                            else:
-                                                st.error(f"Error: {error}")
+                                    # Display detailed errors
+                                    if failed > 0:
+                                        st.markdown("### ❌ Script Generation Errors")
+                                        errors = data.get("errors", [])
+                                        if errors:
+                                            for error in errors:
+                                                if isinstance(error, dict):
+                                                    error_msg = error.get("error", "Unknown error")
+                                                    script_id = error.get("script_id", "Unknown")
+                                                    sub_topic = error.get("sub_topic", "Unknown")
+                                                    st.error(f"**Script ID:** {script_id} | **Sub-topic:** {sub_topic}\n\n**Error:** {error_msg}")
+                                                else:
+                                                    st.error(f"Error: {error}")
+                                        else:
+                                            # Fallback if errors array is missing but failed > 0
+                                            st.error(f"❌ {failed} script(s) failed, but no detailed error information was provided.")
+                                    
+                                    # Also check for top-level batch errors
+                                    if data.get("error"):
+                                        st.markdown("### ❌ Batch Processing Error")
+                                        st.error(f"**Batch Error:** {data.get('error')}")
                                     
                                     st.session_state.script_response = result
                                 else:
