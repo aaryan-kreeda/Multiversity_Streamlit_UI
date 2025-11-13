@@ -16,8 +16,13 @@ from dotenv import load_dotenv
 import os
 
 # Load environment variables
-load_dotenv()
+# For prod branch: load .prod.env only
+if os.path.exists(".prod.env"):
+    load_dotenv(".prod.env")
+else:
+    load_dotenv()
 
+# Get environment variables (supports both .env file and Streamlit Secrets)
 TOC_SERVICE_URL = os.getenv("TOC_SERVICE_URL") or st.secrets.get("TOC_SERVICE_URL", None)
 SCRIPT_SERVICE_URL = os.getenv("SCRIPT_SERVICE_URL") or st.secrets.get("SCRIPT_SERVICE_URL", None)
 
