@@ -481,6 +481,9 @@ with tab1:
                                 st.metric("Execution Time", f"{exec_time}s")
                             
                             st.markdown("---")
+                            
+                            # Rerun to refresh UI and display the new TOC
+                            st.rerun()
                         else:
                             # Error response format
                             error_msg = data.get("message", "Unknown error")
