@@ -417,7 +417,7 @@ with tab1:
         question_id = st.text_input("Question ID", value="q_001", key="toc_question_id")
         topic = st.text_input("Course Topic", value="Python Programming", key="toc_topic")
         course_hours = st.number_input("Course Duration (hours)", min_value=1, max_value=100, value=10, key="toc_hours")
-        learner_path = st.selectbox("Learner Path", ["Professional", "Beginner", "Intermediate", "Advanced"], key="toc_path")
+        learner_path = st.selectbox("Learner Path", ["Professional", "Student", "Entrepreneur"], key="toc_path")
         course_type = st.selectbox("Course Type", ["module", "session"], index=0, key="toc_course_type")
     
     with col2:
@@ -574,13 +574,33 @@ with tab2:
             col_settings1, col_settings2 = st.columns(2)
             
             with col_settings1:
-                region = st.text_input("Region", value="Pan India", key="script_region")
-                learner_path_options = ["Beginner", "Intermediate", "Advanced", "Professional"]
+                # State and Region dropdowns (project level)
+                col_state, col_region = st.columns(2)
+                
+                with col_state:
+                    state = st.selectbox(
+                        "State",
+                        ["Pan India", "Maharashtra", "Haryana", "Odisha", "Tripura", "Bihar", "Madhya Pradesh", "Rajasthan"],
+                        index=0,  # Default to "Pan India"
+                        key="project_state"
+                    )
+                
+                with col_region:
+                    region = st.selectbox(
+                        "Region (Optional)",
+                        [None, "North", "South", "East", "West"],
+                        index=0,  # Default to None
+                        key="project_region",
+                        help="Optional. Not used when State='Pan India'. When State is a specific state, this selects which region within that state to focus on."
+                    )
+                
+                # Learner Path dropdown
+                learner_path_options = ["Professional", "Student", "Entrepreneur"]
                 default_learner_path = course_metadata.get('learner_path', 'Professional')
                 try:
                     default_index = learner_path_options.index(default_learner_path)
                 except ValueError:
-                    default_index = 3  # Default to "Professional" if not found
+                    default_index = 0  # Default to "Professional" if not found (now first in list)
                 
                 learners_path = st.selectbox(
                     "Learner's Path", 
@@ -707,10 +727,17 @@ with tab2:
                             batch_scripts = []
                             script_counter = 1
                             
+                            # Extract state and region from session state
+                            state_value = st.session_state.get("project_state", "Pan India")
+                            region_value = st.session_state.get("project_region")
+                            
+                            # If state is "Pan India", ignore region
+                            if state_value == "Pan India":
+                                region_value = None
+                            
                             # Add subtopics to batch
                             for sub in selected_subtopics:
                                 batch_scripts.append({
-                                    "region": region,
                                     "sub_topic": sub["subtopic_title"],
                                     "learners_path": learners_path,
                                     "description": sub["description"] or f"Educational content for {sub['subtopic_title']}",
@@ -726,7 +753,6 @@ with tab2:
                             # Add subnodes to batch
                             for subnode in selected_subnodes:
                                 batch_scripts.append({
-                                    "region": region,
                                     "sub_topic": subnode["subnode_title"],
                                     "learners_path": learners_path,
                                     "description": subnode.get("description", "") or f"Educational content for {subnode['subnode_title']}",
@@ -739,10 +765,16 @@ with tab2:
                                 })
                                 script_counter += 1
                             
+                            # Build payload with state and region at project level
                             payload = {
                                 "project_id": toc_project_id,
+                                "state": state_value,
                                 "scripts": batch_scripts
                             }
+                            
+                            # Only add region if it's not None
+                            if region_value is not None:
+                                payload["region"] = region_value
                             
                             try:
                                 start_time = time.time()

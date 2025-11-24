@@ -1,7 +1,5 @@
 # Environment and secrets
-.env
-.prod.env
-.dev.env
+*.env
 
 # Virtual environment
 venv/
