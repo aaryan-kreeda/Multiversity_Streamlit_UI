@@ -121,8 +121,7 @@ def display_toc_hierarchical(toc_data: Dict, course_hours: float = None):
                 "Number": "",
                 "Title": safe_str(maintopic_entry),
                 "Description": "",
-                "Duration": "",
-                "Difficulty": ""
+                "Duration": ""
             })
             continue
 
@@ -135,7 +134,6 @@ def display_toc_hierarchical(toc_data: Dict, course_hours: float = None):
             maintopic_num = str(maintopic_num)
         maintopic_title = maintopic.get("title", "Untitled")
         maintopic_duration = maintopic.get("duration", "N/A")
-        maintopic_difficulty = maintopic.get("difficulty_level", "")
         maintopic_desc = safe_str(maintopic.get("description", ""), max_len=80)
 
         rows.append({
@@ -143,8 +141,7 @@ def display_toc_hierarchical(toc_data: Dict, course_hours: float = None):
             "Number": f"**{maintopic_num}**" if maintopic_num else "",
             "Title": f"**{maintopic_title}**",
             "Description": maintopic_desc,
-            "Duration": maintopic_duration,
-            "Difficulty": maintopic_difficulty or "-"
+            "Duration": maintopic_duration
         })
 
         for subtopic in subtopics:
@@ -154,8 +151,7 @@ def display_toc_hierarchical(toc_data: Dict, course_hours: float = None):
                     "Number": "",
                     "Title": safe_str(subtopic),
                     "Description": "",
-                    "Duration": "",
-                    "Difficulty": ""
+                    "Duration": ""
                 })
                 continue
 
@@ -173,8 +169,7 @@ def display_toc_hierarchical(toc_data: Dict, course_hours: float = None):
                 "Number": f"{maintopic_num}.{subtopic_num}" if maintopic_num or subtopic_num else "",
                 "Title": subtopic_title,
                 "Description": subtopic_desc,
-                "Duration": f"{subtopic_duration} min" if subtopic_duration else "-",
-                "Difficulty": "-"
+                "Duration": f"{subtopic_duration} min" if subtopic_duration else "-"
             })
 
             for subnode in subnodes:
@@ -193,8 +188,7 @@ def display_toc_hierarchical(toc_data: Dict, course_hours: float = None):
                     "Number": "",
                     "Title": title,
                     "Description": "",
-                    "Duration": duration_str,
-                    "Difficulty": ""
+                    "Duration": duration_str
                 })
 
     # Create DataFrame
@@ -211,7 +205,6 @@ def display_toc_hierarchical(toc_data: Dict, course_hours: float = None):
             "Title": st.column_config.TextColumn("Title", width="large"),
             "Description": st.column_config.TextColumn("Description", width="large"),
             "Duration": st.column_config.TextColumn("Duration", width="small"),
-            "Difficulty": st.column_config.TextColumn("Difficulty", width="small"),
         },
         hide_index=True,
     )
